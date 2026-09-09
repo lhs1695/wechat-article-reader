@@ -59,12 +59,17 @@ def _ensure_mcp() -> FastMCP:
 
 def _streamable_http_app(mcp_instance: FastMCP) -> Starlette:
     """Return FastMCP's Streamable HTTP ASGI app."""
+    from starlette.applications import Starlette as StarletteApp
+
     factory = getattr(mcp_instance, "streamable_http_app", None) or getattr(
         mcp_instance, "http_app", None
     )
-    if factory is None:
+    if not callable(factory):
         raise InfrastructureError("当前 MCP SDK 不支持 Streamable HTTP")
-    return factory()
+    app = factory()
+    if not isinstance(app, StarletteApp):
+        raise InfrastructureError("当前 MCP SDK 不支持 Streamable HTTP")
+    return app
 
 
 def build_http_app(mcp_instance: FastMCP, auth_token: str | None = None) -> Starlette:
