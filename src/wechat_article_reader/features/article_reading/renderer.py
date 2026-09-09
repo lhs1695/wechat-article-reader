@@ -1,4 +1,7 @@
-"""Markdown renderer shared by MCP, CLI, and file exporters."""
+"""Markdown renderer shared by MCP, CLI, and file exporters.
+
+默认不含图片语法（与 read / Markdown 导出一致）；需要图时显式 include_images=True。
+"""
 
 from __future__ import annotations
 
@@ -12,14 +15,14 @@ class MarkdownReadingRenderer:
         self,
         value: ArticleReadingProjection | Iterable[ReadingBlock],
         *,
-        include_images: bool = True,
+        include_images: bool = False,
     ) -> str:
         blocks = value.blocks if isinstance(value, ArticleReadingProjection) else tuple(value)
         rendered = [self.render_block(block, include_images=include_images) for block in blocks]
         return "\n\n".join(part for part in rendered if part).strip()
 
     @staticmethod
-    def render_block(block: ReadingBlock, *, include_images: bool = True) -> str:
+    def render_block(block: ReadingBlock, *, include_images: bool = False) -> str:
         if block.type == "heading":
             return f"{'#' * max(1, min(block.level or 1, 6))} {block.markdown or block.text}"
         if block.type == "list_item":

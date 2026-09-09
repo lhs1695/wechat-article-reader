@@ -90,10 +90,13 @@ def test_renderer_outputs_model_friendly_markdown() -> None:
     )
 
     markdown = MarkdownReadingRenderer().render(projection)
+    with_images = MarkdownReadingRenderer().render(projection, include_images=True)
 
     assert "## 标题" in markdown
     assert "正文" in markdown
-    assert "![图](<https://mmbiz.qpic.cn/a.png>)" in markdown
+    assert "![" not in markdown
+    assert "mmbiz.qpic.cn" not in markdown
+    assert "![图](<https://mmbiz.qpic.cn/a.png>)" in with_images
 
 
 def test_projection_retains_safe_inline_links_and_drops_unsafe_links() -> None:
@@ -430,9 +433,7 @@ def test_section_seek_drops_next_heading_teasers_but_keeps_short_prose() -> None
         "<p>05</p><p>PHASE THREE</p>"
         "<h3>第三阶段：执行</h3><p>后面还有</p>"
     )
-    keep_short = _article(
-        "<h3>设计逻辑</h3><p>不重复了。</p><h3>下一节</h3><p>乙</p>"
-    )
+    keep_short = _article("<h3>设计逻辑</h3><p>不重复了。</p><h3>下一节</h3><p>乙</p>")
     service = ArticleReadingService(_Workflow(article), _Storage(article))
     keep_service = ArticleReadingService(_Workflow(keep_short), _Storage(keep_short))
 

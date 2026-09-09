@@ -170,9 +170,7 @@ def db_downgrade(revision: str) -> None:
     is_flag=True,
     help="Markdown 导出时保留图片语法（默认与 MCP 阅读一致，不含图）",
 )
-def fetch(
-    url: str, no_summary: bool, export: str | None, output: str | None, images: bool
-):
+def fetch(url: str, no_summary: bool, export: str | None, output: str | None, images: bool):
     """
     抓取并处理单篇文章
 
@@ -193,7 +191,11 @@ def fetch(
 @click.argument("source")
 @click.option("--refresh", is_flag=True, help="URL 输入时重新抓取并更新缓存")
 @click.option("--cursor", type=click.IntRange(min=0), default=0, show_default=True)
-@click.option("--section", default=None, help="按章节标题读取该节；节过长再分页。与 --cursor 同时出现时在该节内续读")
+@click.option(
+    "--section",
+    default=None,
+    help="按章节标题读取该节；节过长再分页。与 --cursor 同时出现时在该节内续读",
+)
 @click.option(
     "--max-chars",
     type=click.IntRange(min=1_000, max=20_000),

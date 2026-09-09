@@ -95,6 +95,7 @@ def test_home_page_describes_export_first_pipeline() -> None:
 
     assert response.status_code == 200
     assert "统一 Markdown 投影" in response.text
+    assert "默认无图" in response.text
     assert "分页 Markdown" not in response.text
 
 

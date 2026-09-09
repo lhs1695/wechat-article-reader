@@ -135,9 +135,7 @@ def test_account_footer_wall_is_dropped_in_article_extend_links_stay() -> None:
         title="匿名推荐墙样例",
         content=ArticleContent.from_html(footer_html),
     )
-    dirty_markdown = MarkdownReadingRenderer().render(
-        ArticleReadingProjector().project(dirty)
-    )
+    dirty_markdown = MarkdownReadingRenderer().render(ArticleReadingProjector().project(dirty))
     footer_markdown = MarkdownReadingRenderer().render(
         ArticleReadingProjector().project(footer_article)
     )

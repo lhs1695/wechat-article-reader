@@ -302,9 +302,7 @@ def resolve_section_cursor(sections: tuple[ReadingSection, ...], section: str) -
     return resolve_section(sections, section).start_cursor
 
 
-def _covering_section(
-    sections: tuple[ReadingSection, ...], cursor: int
-) -> ReadingSection | None:
+def _covering_section(sections: tuple[ReadingSection, ...], cursor: int) -> ReadingSection | None:
     covering = [item for item in sections if item.start_cursor <= cursor < item.end_cursor]
     if covering:
         covering.sort(key=lambda item: (item.start_cursor, item.level))
