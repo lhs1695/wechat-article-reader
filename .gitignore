@@ -1,3 +1,11 @@
+# Local-only notes (interview / upgrade). Keep on disk; do not publish.
+AGENTS.md
+docs/面试手册.md
+docs/设计动机与经历.md
+docs/MCP构建设计与面试讲述.md
+docs/阶段性总结.md
+docs/演进与升级.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
