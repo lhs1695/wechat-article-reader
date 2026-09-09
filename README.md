@@ -124,7 +124,7 @@ ingest_article(url)
 | --- | --- | --- |
 | `ingest_article(url, refresh=false, toc_level=2)` | 联网 + 写 SQLite | 唯一抓公众号入口；默认 H2，无 H2 时对齐到最浅标题 |
 | `get_cached_article(article_id, toc_level=2)` | 无 | 再读元数据；ingest 已带目录时可跳过 |
-| `read_article(article_id, cursor=0, max_chars=8000, include_images=false, section=null)` | 无 | 一页 Markdown；`section` 优先于 `cursor` |
+| `read_article(article_id, cursor=0, max_chars=8000, include_images=false, section=null)` | 无 | 一页 Markdown；`section`（精确或至少两字唯一前缀）优先于 `cursor` |
 | `summarize_article(article_id, max_length=500)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
 分页约定：

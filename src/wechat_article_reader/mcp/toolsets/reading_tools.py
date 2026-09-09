@@ -70,7 +70,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
     ) -> dict[str, Any]:
         """读取一页缓存 Markdown。只读本地，不联网。
 
-        优先传 section（章节标题，精确或唯一前缀）；与 cursor 同时出现时以 section 为准。
+        优先传 section（章节标题：精确匹配，或至少两字的唯一前缀）；与 cursor 同时出现时以 section 为准。
         需要续读时把上次响应的 next_cursor 原样传入。单个块超过当前 max_chars 但不超过
         20000 时会整块返回；超过 20000 才返回 page_too_large。
         include_images=false（默认）排除图片语法、保留说明。

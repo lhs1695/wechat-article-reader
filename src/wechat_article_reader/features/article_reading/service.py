@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 DEFAULT_TOC_LEVEL = 2
 _HEADING_BREAK_MAX_LEVEL = 3
+_MIN_SECTION_PREFIX = 2
 
 
 class ArticleReadingError(RuntimeError):
@@ -274,6 +275,8 @@ def resolve_section_cursor(sections: tuple[ReadingSection, ...], section: str) -
         return exact[0].start_cursor
     if len(exact) > 1:
         raise ValueError(f"section {needle!r} is ambiguous")
+    if len(needle) < _MIN_SECTION_PREFIX:
+        raise ValueError(f"section not found: {needle}")
     prefixes = [item for item in sections if item.title.startswith(needle)]
     if len(prefixes) == 1:
         return prefixes[0].start_cursor
@@ -314,9 +317,13 @@ def _page_preamble(
         title = (article.title or "").strip() or "未命名"
         author = (article.author or "").strip()
         first = selected[0] if selected else None
-        same_heading = first is not None and first.type == "heading" and first.text == title
-        if same_heading:
-            return f"{title} · {author}" if author else ""
+        first_heading = (
+            first.text.strip()
+            if first is not None and first.type == "heading" and first.text
+            else ""
+        )
+        if first_heading == title:
+            return f"作者：{author}" if author else ""
         return f"# {title} · {author}" if author else f"# {title}"
     if not section_title:
         return ""

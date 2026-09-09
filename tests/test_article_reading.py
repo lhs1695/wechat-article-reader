@@ -367,7 +367,20 @@ def test_ingest_toc_aligns_to_shallowest_heading_when_article_has_no_h2() -> Non
     result = service.ingest(str(article.url))
 
     assert [section.title for section in result.sections] == ["一、背景", "二、方案"]
+    assert "正文" not in [section.title for section in result.sections]
     assert result.sections[0].end_cursor == result.sections[1].start_cursor
+    assert result.sections[0].end_cursor < result.block_count
+
+
+def test_leading_copy_before_h3_is_preamble_not_whole_article() -> None:
+    article = _article("<p>开场</p><h3>一、背景</h3><p>甲</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    result = service.ingest(str(article.url))
+
+    assert [section.title for section in result.sections] == ["正文", "一、背景"]
+    assert result.sections[0].end_cursor == result.sections[1].start_cursor
+    assert result.sections[1].end_cursor == result.block_count
 
 
 def test_read_fills_page_across_headings_instead_of_rewinding_to_last_h3() -> None:
@@ -397,24 +410,34 @@ def test_continuation_page_uses_current_section_not_later_heading() -> None:
 
 
 def test_read_jumps_to_section_title_and_unique_prefix() -> None:
-    article = _article("<h2>前言</h2><p>甲段</p><h2>结语</h2><p>乙段内容</p>")
+    article = _article("<h2>前言</h2><p>甲段</p><h2>实践总结</h2><p>乙段内容</p>")
     service = ArticleReadingService(_Workflow(article), _Storage(article))
 
-    page = service.read(article.id, cursor=99, section="结", max_chars=1_000)
+    exact = service.read(article.id, cursor=99, section="实践总结", max_chars=1_000)
+    prefix = service.read(article.id, cursor=99, section="实践", max_chars=1_000)
 
-    assert "乙段内容" in page.content_markdown
-    assert "甲段" not in page.content_markdown
-    assert page.section_title == "结语"
+    assert "乙段内容" in exact.content_markdown
+    assert "甲段" not in exact.content_markdown
+    assert exact.section_title == "实践总结"
+    assert prefix.section_title == "实践总结"
+
+
+def test_read_rejects_one_character_section_prefix() -> None:
+    article = _article("<h2>结语</h2><p>乙段内容</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    with pytest.raises(ValueError, match="not found"):
+        service.read(article.id, section="结")
 
 
 def test_read_rejects_missing_or_ambiguous_section() -> None:
-    article = _article("<h2>第一部分</h2><p>甲</p><h2>第二部</h2><p>乙</p>")
+    article = _article("<h2>第一部分</h2><p>甲</p><h2>第一部</h2><p>乙</p>")
     service = ArticleReadingService(_Workflow(article), _Storage(article))
 
     with pytest.raises(ValueError, match="not found"):
         service.read(article.id, section="不存在")
     with pytest.raises(ValueError, match="ambiguous"):
-        service.read(article.id, section="第")
+        service.read(article.id, section="第一")
 
 
 def test_first_page_header_includes_author() -> None:
@@ -426,3 +449,15 @@ def test_first_page_header_includes_author() -> None:
 
     assert page.content_markdown.startswith("# 长文 · 黄迅")
     assert "开篇" in page.content_markdown
+
+
+def test_first_page_does_not_repeat_title_when_body_starts_with_same_heading() -> None:
+    article = _article("<h2>长文</h2><p>开篇</p>", title="长文")
+    object.__setattr__(article, "author", "黄迅")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    page = service.read(article.id, max_chars=1_000)
+
+    assert page.content_markdown.startswith("作者：黄迅")
+    assert page.content_markdown.count("长文") == 1
+    assert "## 长文" in page.content_markdown
