@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1>批量处理</h1>
+  <p>每行一个链接，选择模式后统一导出</p>
+</div>
+
+<div class="card">
+  <div class="card-title">文章链接列表</div>
+  <textarea id="urls" rows="8" placeholder="https://mp.weixin.qq.com/s/xxx&#10;https://mp.weixin.qq.com/s/yyy&#10;https://mp.weixin.qq.com/s/zzz"></textarea>
+
+  <div class="form-row" style="margin-top:12px">
+    <div class="form-group">
+      <label>导出格式</label>
+      <select id="fmt">
+        <option value="markdown">Markdown</option>
+        <option value="html">HTML</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="btn-group" id="actions">
+    <button class="btn" data-mode="fetch">原文抓取</button>
+    <button class="btn" data-mode="summarize">原文摘要</button>
+    <button class="btn" data-mode="full">原文抓取+摘要</button>
+  </div>
+  <div id="go-area" style="display:none;margin-top:10px">
+    <button class="btn btn-primary" id="run-btn">▶ 开始处理</button>
+  </div>
+
+  <div id="out" style="margin-top:16px"></div>
+</div>
+
+<script nonce="{{ request.state.csp_nonce }}">
+let curMode=null;
+
+function selectMode(btn){
+  document.querySelectorAll('#actions .btn').forEach(b=>{b.className='btn'});
+  btn.className='btn btn-primary';
+  curMode=btn.dataset.mode;
+  document.getElementById('go-area').style.display='block';
+  document.getElementById('out').innerHTML='';
+}
+
+async function run(){
+  const raw=document.getElementById('urls').value;
+  const urls=raw.split('\n').map(s=>s.trim()).filter(Boolean);
+  const fmt=document.getElementById('fmt').value;
+  const el=document.getElementById('out');
+  if(!urls.length){_toast('请先输入文章链接','err');return}
+
+  el.innerHTML=`<div class="loading"><span class="spinner"></span>处理 ${urls.length} 篇文章…</div>`;
+
+  const isFetch=curMode==='fetch';
+  const isSummarize=curMode==='summarize';
+  try{
+    const r=await fetch('/api/batch/process',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({urls,export_target:fmt,skip_summary:isFetch,include_body:!isSummarize})
+    });
+    const data=await r.json();
+    const ok=data.filter(d=>d.success).length;
+    const rows=data.map(d=>d.success
+      ?`<div class="batch-row ok"><span class="mark">✓</span>${_escapeHtml(d.title)} <a href="${_escapeHtml(d.download_url)}" style="margin-left:10px;font-size:12px;color:#6366f1;text-decoration:none">⬇ 下载</a></div>`
+      :`<div class="batch-row err"><span class="mark">✗</span>${_escapeHtml(d.url)} — ${_escapeHtml(d.error)}</div>`
+    ).join('');
+    el.innerHTML=`<p style="margin-bottom:10px;color:#71717a">完成 ${ok}/${data.length}</p>${rows}`;
+    _toast(ok===data.length?`全部成功 (${ok})`:`${ok} 成功 ${data.length-ok} 失败`,ok===data.length?'ok':'info');
+  }catch(e){
+    el.innerHTML=`<div class="result err">${_escapeHtml(e.message)}</div>`;_toast(e.message,'err');
+  }
+}
+document.querySelectorAll('#actions .btn').forEach(btn=>btn.addEventListener('click',()=>selectMode(btn)));
+document.getElementById('run-btn').addEventListener('click',run);
+</script>
+{% endblock %}

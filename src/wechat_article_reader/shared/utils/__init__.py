@@ -1,0 +1,42 @@
+"""共享工具"""
+
+from datetime import UTC, datetime
+
+from .html_safety import escape_html, sanitize_html
+from .logger import get_logger, logger, setup_logger
+from .retry import async_retry, retry
+from .text import (
+    chunk_text,
+    clean_whitespace,
+    count_words,
+    normalize_url,
+    remove_html_tags,
+    truncate_text,
+)
+
+
+def utc_now() -> datetime:
+    """返回当前 UTC 时间（带时区信息），替代 datetime.now() 的无时区调用"""
+    return datetime.now(UTC)
+
+
+__all__ = [
+    "async_retry",
+    "chunk_text",
+    "clean_whitespace",
+    "count_words",
+    "escape_html",
+    "get_logger",
+    # Logger
+    "logger",
+    "normalize_url",
+    "remove_html_tags",
+    # Retry
+    "retry",
+    "sanitize_html",
+    "setup_logger",
+    # Text
+    "truncate_text",
+    # Datetime
+    "utc_now",
+]

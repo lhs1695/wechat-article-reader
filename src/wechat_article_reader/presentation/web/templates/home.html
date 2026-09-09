@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1>微信文章阅读</h1>
+  <p>抓取文章 → SQLite 缓存 → 分页 Markdown → 可选摘要 → 导出</p>
+</div>
+
+<div class="card">
+  <div class="card-title">系统状态</div>
+  <div class="stats">
+    <div class="stat"><div class="stat-value" id="n-s">-</div><div class="stat-label">可用摘要器</div></div>
+    <div class="stat"><div class="stat-value" id="n-e">-</div><div class="stat-label">可用导出器</div></div>
+    <div class="stat"><div class="stat-value" id="n-c">-</div><div class="stat-label">缓存文章</div></div>
+  </div>
+  <div id="detail" style="margin-top:16px;color:#71717a;font-size:13px"></div>
+</div>
+
+<script nonce="{{ request.state.csp_nonce }}">
+fetch('/api/status').then(r=>r.json()).then(d=>{
+  document.getElementById('n-s').textContent=d.summarizers.length;
+  document.getElementById('n-e').textContent=d.exporters.length;
+  document.getElementById('n-c').textContent=d.total_cached;
+  document.getElementById('detail').textContent=
+    `摘要器: ${d.summarizers.join(', ')}  |  导出器: ${d.exporters.join(', ')}`;
+});
+</script>
+{% endblock %}

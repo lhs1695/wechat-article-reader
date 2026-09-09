@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "阅读投影：HTML 分块、目录、软分页",
+    "locale": "zh-CN",
+    "output": "05-reading-projection.html",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 720],
+    "views": [
+      {
+        "id": "project",
+        "label": "投影",
+        "focus": ["html", "projector", "blocks", "sections"],
+        "note": "清洗后的 HTML 按文档顺序拆块；sections 由 heading 推导。"
+      },
+      {
+        "id": "page",
+        "label": "分页",
+        "focus": ["blocks", "paginate", "markdown"],
+        "note": "按渲染长度累加，硬顶是 max_chars；列表尽量整组。"
+      },
+      {
+        "id": "overflow",
+        "label": "超大块",
+        "focus": ["paginate", "too_large"],
+        "note": "单块超过 20000 才 page_too_large；否则可整块返回。"
+      }
+    ]
+  },
+  "lanes": [
+    { "id": "source", "label": "缓存 HTML" },
+    { "id": "project", "label": "投影" },
+    { "id": "page", "label": "分页" },
+    { "id": "out", "label": "对外契约" },
+    { "id": "exceptions", "label": "硬顶", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "clean", "label": "读缓存", "fromCol": 0, "toCol": 1 },
+    { "id": "split", "label": "分块 + 目录", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "emit", "label": "成页", "fromCol": 4, "toCol": 5 }
+  ],
+  "groups": [
+    { "id": "runtime_only", "label": "读时现算，不入库", "lane": "project", "fromCol": 2, "toCol": 3, "variant": "emphasis" }
+  ],
+  "mainPath": ["html", "projector", "blocks", "sections", "paginate", "markdown"],
+  "nodes": [
+    { "id": "html", "lane": "source", "col": 0, "type": "database", "label": "content_html", "sublabel": "articles 表" },
+    { "id": "projector", "lane": "source", "col": 1, "type": "backend", "label": "Projector", "sublabel": "按序走查" },
+    { "id": "blocks", "lane": "project", "col": 2, "type": "backend", "label": "blocks", "sublabel": "块类型" },
+    { "id": "sections", "lane": "project", "col": 3, "type": "backend", "label": "sections", "sublabel": "默认压到 H2" },
+    { "id": "paginate", "lane": "page", "col": 4, "type": "backend", "label": "软分页", "sublabel": "max_chars" },
+    { "id": "markdown", "lane": "out", "col": 5, "type": "frontend", "label": "Markdown 页", "sublabel": "cursor / next_cursor" },
+    { "id": "too_large", "lane": "exceptions", "col": 5, "type": "security", "label": "page_too_large", "sublabel": "单块 > 20000" }
+  ],
+  "edges": [
+    { "id": "load-html", "from": "html", "to": "projector", "label": "project", "variant": "emphasis" },
+    { "id": "to-blocks", "from": "projector", "to": "blocks", "variant": "emphasis" },
+    { "id": "to-sections", "from": "blocks", "to": "sections", "label": "由 heading 推导", "labelDy": -22 },
+    { "id": "to-page", "from": "sections", "to": "paginate", "variant": "emphasis" },
+    { "id": "to-md", "from": "paginate", "to": "markdown", "variant": "emphasis" },
+    { "id": "overflow", "from": "paginate", "to": "too_large", "variant": "security", "role": "error" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "公开承诺",
+      "items": [
+        "对外只有 Markdown 页、cursor、可选 section；block id 不对外"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "目录与跳章",
+      "items": [
+        "默认 toc_level=2；无 H2 时对齐最浅标题"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "软边界",
+      "items": [
+        "列表尽量整组；溢出时把未写完的 H2/H3 留给下一页"
+      ]
+    }
+  ]
+}

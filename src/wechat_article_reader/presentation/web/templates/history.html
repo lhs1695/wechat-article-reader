@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1>历史记录</h1>
+  <p>已处理文章列表</p>
+</div>
+
+<style>
+.mode-fetch { color: #a1a1aa; }
+.mode-summarize { color: #e4e4e7; }
+.mode-full { color: #e4e4e7; font-weight:500; }
+</style>
+
+<div class="card">
+  <div class="card-title">最近文章</div>
+  <table>
+    <thead><tr><th>标题</th><th>字数</th><th>操作</th><th>日期</th></tr></thead>
+    <tbody id="tb"><tr class="empty"><td colspan="4">加载中…</td></tr></tbody>
+  </table>
+</div>
+
+<script nonce="{{ request.state.csp_nonce }}">
+fetch('/api/history/list').then(r=>r.json()).then(d=>{
+  const tb=document.getElementById('tb');
+  if(!d.length){tb.innerHTML='<tr class="empty"><td colspan="4">暂无记录</td></tr>';return}
+  d.forEach(i=>{
+    const row=document.createElement('tr');
+    const titleCell=document.createElement('td');
+    const link=document.createElement('a');
+    link.href=i.url; link.target='_blank'; link.rel='noopener noreferrer'; link.textContent=i.title;
+    titleCell.appendChild(link);
+    const words=document.createElement('td');
+    words.style.cssText='font-size:12px;color:#71717a';
+    words.textContent=i.word_count ? i.word_count.toLocaleString()+'字' : '-';
+    const mode=document.createElement('td'); mode.style.fontSize='12px';
+    const modeText=document.createElement('span');
+    if(i.summarized){modeText.className='mode-summarize';modeText.textContent='已摘要'}
+    else{modeText.className='mode-fetch';modeText.textContent='仅缓存'}
+    mode.appendChild(modeText);
+    const date=document.createElement('td'); date.style.cssText='font-size:12px;color:#71717a';
+    date.textContent=i.cached_at ? i.cached_at.slice(0,10) : '-';
+    row.append(titleCell,words,mode,date); tb.appendChild(row);
+  });
+}).catch(()=>{document.getElementById('tb').innerHTML='<tr class="empty"><td colspan="4">加载失败</td></tr>'});
+</script>
+{% endblock %}

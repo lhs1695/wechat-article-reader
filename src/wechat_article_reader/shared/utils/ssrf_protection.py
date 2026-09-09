@@ -1,0 +1,422 @@
+"""SSRF 防护模块 — DNS 重绑定安全传输层
+
+实现"解析一次，验证 IP，连接已验证 IP"的安全模式，
+消除 DNS 重绑定 TOCTOU 攻击窗口。
+
+覆盖审计问题:
+- P0-3: SSRF 缺少 DNS 重绑定保护
+- P1-4: SSRF 无 HTTP 重定向验证
+- P1-5: 替代 IP 表示法未被阻止
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import socket
+from typing import Any
+from urllib.parse import urljoin, urlparse
+
+import httpx
+from loguru import logger
+
+
+class SSRFBlockedError(Exception):
+    """SSRF 防护拦截异常"""
+
+
+class ResponseTooLargeError(Exception):
+    """Remote response exceeded the configured byte limit."""
+
+
+class UnsafeContentTypeError(Exception):
+    """Remote response is not an allowed document type."""
+
+
+class _SSRFSafeBase:
+    """SSRF 安全传输层共享逻辑"""
+
+    # 封锁的 IP 范围（包括 IPv4 和 IPv6）
+    BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
+        ipaddress.ip_network("0.0.0.0/8"),
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("100.64.0.0/10"),
+        ipaddress.ip_network("127.0.0.0/8"),
+        ipaddress.ip_network("169.254.0.0/16"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.0.0.0/24"),
+        ipaddress.ip_network("192.0.2.0/24"),
+        ipaddress.ip_network("192.88.99.0/24"),
+        ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("198.51.100.0/24"),
+        ipaddress.ip_network("203.0.113.0/24"),
+        ipaddress.ip_network("224.0.0.0/4"),
+        ipaddress.ip_network("240.0.0.0/4"),
+        ipaddress.ip_network("255.255.255.255/32"),
+        ipaddress.ip_network("::1/128"),
+        ipaddress.ip_network("fc00::/7"),
+        ipaddress.ip_network("fe80::/10"),
+        ipaddress.ip_network("ff00::/8"),
+        ipaddress.ip_network("::ffff:0.0.0.0/96"),
+    )
+
+    BLOCKED_HOSTNAMES: frozenset[str] = frozenset(
+        {
+            "localhost",
+            "instance-data",
+            "metadata.google.internal",
+            "metadata.internal",
+            "169.254.169.254",
+            "fd00:ec2::254",
+        }
+    )
+
+    @classmethod
+    def is_ip_blocked(cls, ip_str: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return True
+
+        if ip.is_loopback or ip.is_link_local:
+            return True
+
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            return cls.is_ip_blocked(str(ip.ipv4_mapped))
+
+        return any(ip in network for network in cls.BLOCKED_NETWORKS)
+
+    @classmethod
+    def _looks_like_alt_ip_notation(cls, hostname: str) -> bool:
+        # 纯数字（十进制整型 IPv4）
+        if hostname.isdigit():
+            return True
+
+        # 可疑点分十进制表示（如 0177.0.0.1）
+        parts = hostname.split(".")
+        if len(parts) == 4 and all(part.isdigit() for part in parts):
+            return any(len(part) > 1 and part.startswith("0") for part in parts)
+
+        return False
+
+    @classmethod
+    def resolve_and_validate(cls, hostname: str, port: int | None = None) -> list[str]:
+        if hostname.lower() in cls.BLOCKED_HOSTNAMES:
+            raise SSRFBlockedError(f"Blocked hostname: {hostname}")
+
+        if cls._looks_like_alt_ip_notation(hostname):
+            raise SSRFBlockedError(f"Blocked alternative IP notation: {hostname}")
+
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if cls.is_ip_blocked(str(ip)):
+                raise SSRFBlockedError(f"Blocked IP address: {ip}")
+            return [str(ip)]
+        except ValueError:
+            pass
+
+        try:
+            addr_infos = socket.getaddrinfo(
+                hostname,
+                port or 443,
+                socket.AF_UNSPEC,
+                socket.SOCK_STREAM,
+            )
+        except socket.gaierror as e:
+            raise SSRFBlockedError(f"DNS resolution failed for {hostname}: {e}") from e
+
+        validated_ips: list[str] = []
+        for _family, _type, _proto, _canonname, sockaddr in addr_infos:
+            ip_str = str(sockaddr[0])
+            if cls.is_ip_blocked(ip_str):
+                raise SSRFBlockedError(f"DNS resolved {hostname} to blocked IP: {ip_str}")
+            if ip_str not in validated_ips:
+                validated_ips.append(ip_str)
+
+        if not validated_ips:
+            raise SSRFBlockedError(f"No valid IP addresses for: {hostname}")
+
+        return validated_ips
+
+    @classmethod
+    def validate_url(cls, url: str) -> str:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise SSRFBlockedError(f"Disallowed URL scheme: {parsed.scheme!r}")
+        if not parsed.hostname:
+            raise SSRFBlockedError("URL missing hostname")
+        cls.resolve_and_validate(parsed.hostname, parsed.port)
+        return url
+
+
+class SSRFSafeTransport(_SSRFSafeBase, httpx.AsyncHTTPTransport):
+    """异步安全传输层（固定已校验 IP）"""
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        hostname = request.url.host
+        if not hostname:
+            raise SSRFBlockedError("Request missing hostname")
+
+        validated_ips = self.resolve_and_validate(hostname, request.url.port)
+        ip = validated_ips[0]
+        host_for_url = f"[{ip}]" if ":" in ip else ip
+
+        new_url = request.url.copy_with(host=host_for_url)
+        headers = httpx.Headers(request.headers)
+        headers["Host"] = hostname
+        extensions = dict(request.extensions)
+        extensions["sni_hostname"] = hostname
+
+        ip_request = httpx.Request(
+            method=request.method,
+            url=new_url,
+            headers=headers,
+            content=request.content,
+            extensions=extensions,
+        )
+        return await super().handle_async_request(ip_request)
+
+
+class SSRFSafeSyncTransport(_SSRFSafeBase, httpx.HTTPTransport):
+    """同步安全传输层（固定已校验 IP）"""
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        hostname = request.url.host
+        if not hostname:
+            raise SSRFBlockedError("Request missing hostname")
+
+        validated_ips = self.resolve_and_validate(hostname, request.url.port)
+        ip = validated_ips[0]
+        host_for_url = f"[{ip}]" if ":" in ip else ip
+
+        new_url = request.url.copy_with(host=host_for_url)
+        headers = httpx.Headers(request.headers)
+        headers["Host"] = hostname
+        extensions = dict(request.extensions)
+        extensions["sni_hostname"] = hostname
+
+        ip_request = httpx.Request(
+            method=request.method,
+            url=new_url,
+            headers=headers,
+            content=request.content,
+            extensions=extensions,
+        )
+        return super().handle_request(ip_request)
+
+
+def create_safe_async_client(**kwargs: Any) -> httpx.AsyncClient:
+    kwargs.setdefault("follow_redirects", False)
+    kwargs.setdefault("timeout", httpx.Timeout(30.0))
+    kwargs.setdefault("trust_env", False)
+    return httpx.AsyncClient(transport=SSRFSafeTransport(), **kwargs)
+
+
+def create_safe_client(**kwargs: Any) -> httpx.Client:
+    kwargs.setdefault("follow_redirects", False)
+    kwargs.setdefault("timeout", 30.0)
+    kwargs.setdefault("trust_env", False)
+    return httpx.Client(transport=SSRFSafeSyncTransport(), **kwargs)
+
+
+def _extract_client_kwargs(request_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Split client-only kwargs from request kwargs.
+
+    `httpx` 0.28 accepts `proxy` on the client constructor, but not on
+    `Client.request()` / `AsyncClient.request()`. Generic scrapers pass
+    `proxy=None` by default, so we consume it here before issuing requests.
+    """
+
+    client_kwargs: dict[str, Any] = {}
+
+    if request_kwargs.pop("proxy", None):
+        raise SSRFBlockedError("Proxy use is disabled for untrusted URL fetching")
+
+    return client_kwargs
+
+
+def _check_response_headers(
+    response: httpx.Response,
+    *,
+    max_response_bytes: int | None,
+    allowed_content_types: set[str] | None,
+) -> None:
+    if max_response_bytes is not None:
+        raw_length = response.headers.get("content-length")
+        if raw_length:
+            try:
+                if int(raw_length) > max_response_bytes:
+                    raise ResponseTooLargeError("Remote response exceeds the configured limit")
+            except ValueError:
+                pass
+
+    if allowed_content_types and 200 <= response.status_code < 300:
+        content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type not in allowed_content_types:
+            raise UnsafeContentTypeError("Remote response is not an allowed HTML document")
+
+
+def _buffered_response(response: httpx.Response, content: bytes) -> httpx.Response:
+    headers = httpx.Headers(response.headers)
+    headers.pop("content-encoding", None)
+    headers["content-length"] = str(len(content))
+    return httpx.Response(
+        status_code=response.status_code,
+        headers=headers,
+        content=content,
+        request=response.request,
+        extensions=response.extensions,
+    )
+
+
+async def _read_async_response(
+    response: httpx.Response,
+    *,
+    max_response_bytes: int | None,
+    allowed_content_types: set[str] | None,
+) -> httpx.Response:
+    try:
+        _check_response_headers(
+            response,
+            max_response_bytes=max_response_bytes,
+            allowed_content_types=allowed_content_types,
+        )
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in response.aiter_bytes():
+            size += len(chunk)
+            if max_response_bytes is not None and size > max_response_bytes:
+                raise ResponseTooLargeError("Remote response exceeds the configured limit")
+            chunks.append(chunk)
+        return _buffered_response(response, b"".join(chunks))
+    finally:
+        await response.aclose()
+
+
+def _read_sync_response(
+    response: httpx.Response,
+    *,
+    max_response_bytes: int | None,
+    allowed_content_types: set[str] | None,
+) -> httpx.Response:
+    try:
+        _check_response_headers(
+            response,
+            max_response_bytes=max_response_bytes,
+            allowed_content_types=allowed_content_types,
+        )
+        chunks: list[bytes] = []
+        size = 0
+        for chunk in response.iter_bytes():
+            size += len(chunk)
+            if max_response_bytes is not None and size > max_response_bytes:
+                raise ResponseTooLargeError("Remote response exceeds the configured limit")
+            chunks.append(chunk)
+        return _buffered_response(response, b"".join(chunks))
+    finally:
+        response.close()
+
+
+async def safe_fetch(
+    url: str,
+    *,
+    method: str = "GET",
+    max_redirects: int = 5,
+    **kwargs: Any,
+) -> httpx.Response:
+    request_kwargs = dict(kwargs)
+    client_kwargs = _extract_client_kwargs(request_kwargs)
+    max_response_bytes = request_kwargs.pop("max_response_bytes", None)
+    allowed_content_types = request_kwargs.pop("allowed_content_types", None)
+
+    async with create_safe_async_client(**client_kwargs) as client:
+        current_url = url
+        current_method = method
+        for redirect_count in range(max_redirects + 1):
+            SSRFSafeTransport.validate_url(current_url)
+            request = client.build_request(current_method, current_url, **request_kwargs)
+            response = await client.send(request, stream=True)
+
+            if response.status_code not in (301, 302, 303, 307, 308):
+                return await _read_async_response(
+                    response,
+                    max_response_bytes=max_response_bytes,
+                    allowed_content_types=allowed_content_types,
+                )
+
+            redirect_url = response.headers.get("location")
+            if not redirect_url:
+                return await _read_async_response(
+                    response,
+                    max_response_bytes=max_response_bytes,
+                    allowed_content_types=allowed_content_types,
+                )
+            await response.aclose()
+            redirect_url = urljoin(current_url, redirect_url)
+
+            logger.debug(
+                f"SSRF safe redirect [{redirect_count + 1}/{max_redirects}]: "
+                f"{current_url} → {redirect_url}"
+            )
+
+            SSRFSafeTransport.validate_url(redirect_url)
+            current_url = redirect_url
+            if response.status_code == 303:
+                current_method = "GET"
+
+        raise httpx.TooManyRedirects(
+            f"Exceeded max redirects ({max_redirects})",
+            request=httpx.Request(current_method, url),
+        )
+
+
+def safe_fetch_sync(
+    url: str,
+    *,
+    method: str = "GET",
+    max_redirects: int = 5,
+    **kwargs: Any,
+) -> httpx.Response:
+    request_kwargs = dict(kwargs)
+    client_kwargs = _extract_client_kwargs(request_kwargs)
+    max_response_bytes = request_kwargs.pop("max_response_bytes", None)
+    allowed_content_types = request_kwargs.pop("allowed_content_types", None)
+
+    with create_safe_client(**client_kwargs) as client:
+        current_url = url
+        current_method = method
+        for redirect_count in range(max_redirects + 1):
+            SSRFSafeSyncTransport.validate_url(current_url)
+            request = client.build_request(current_method, current_url, **request_kwargs)
+            response = client.send(request, stream=True)
+
+            if response.status_code not in (301, 302, 303, 307, 308):
+                return _read_sync_response(
+                    response,
+                    max_response_bytes=max_response_bytes,
+                    allowed_content_types=allowed_content_types,
+                )
+
+            redirect_url = response.headers.get("location")
+            if not redirect_url:
+                return _read_sync_response(
+                    response,
+                    max_response_bytes=max_response_bytes,
+                    allowed_content_types=allowed_content_types,
+                )
+            response.close()
+            redirect_url = urljoin(current_url, redirect_url)
+
+            logger.debug(
+                f"SSRF safe redirect [{redirect_count + 1}/{max_redirects}]: "
+                f"{current_url} → {redirect_url}"
+            )
+
+            SSRFSafeSyncTransport.validate_url(redirect_url)
+            current_url = redirect_url
+            if response.status_code == 303:
+                current_method = "GET"
+
+        raise httpx.TooManyRedirects(
+            f"Exceeded max redirects ({max_redirects})",
+            request=httpx.Request(current_method, url),
+        )

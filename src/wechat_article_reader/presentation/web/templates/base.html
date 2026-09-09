@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title>微信文章阅读 · WeChat Article Reader</title>
+  <link rel="icon" href="/static/logo.jpg" type="image/jpeg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav class="sidebar">
+  <a href="/" class="sidebar-brand" style="text-decoration:none">
+    <img src="/static/logo.jpg" alt="logo" class="logo">
+    <span>微信文章阅读</span>
+  </a>
+
+  <div class="sidebar-nav">
+    <p class="nav-label">操作</p>
+    <a href="/" class="nav-item"><span class="icon">⌂</span>首页</a>
+    <a href="/article" class="nav-item"><span class="icon">▣</span>单篇处理</a>
+    <a href="/batch" class="nav-item"><span class="icon">⊞</span>批量处理</a>
+
+    <p class="nav-label">数据</p>
+    <a href="/history" class="nav-item"><span class="icon">☰</span>历史记录</a>
+
+  </div>
+
+  <div class="sidebar-footer">
+    <span class="dot" id="dot"></span>
+    <span id="status-text">加载中</span>
+  </div>
+</nav>
+
+<main class="content">{% block content %}{% endblock %}</main>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<button class="theme-toggle" id="theme" title="切换主题">☾</button>
+
+<script nonce="{{ request.state.csp_nonce }}">
+// Nav highlight
+document.querySelectorAll('.nav-item').forEach(a=>{
+  if(a.getAttribute('href')===location.pathname)a.classList.add('active')
+});
+
+// Status
+fetch('/api/status').then(r=>r.json()).then(d=>{
+  document.getElementById('dot').className='dot online';
+  document.getElementById('status-text').textContent=`${d.summarizers.length} 摘要器 · ${d.total_cached} 缓存`;
+}).catch(()=>document.getElementById('status-text').textContent='离线');
+
+// Theme
+(function(){
+  const s=localStorage.getItem('theme');
+  const isLight=s==='light';
+  document.body.classList.toggle('light', isLight);
+  document.getElementById('theme').textContent=isLight?'☀':'☾';
+})();
+function toggleTheme(){
+  const isLight=document.body.classList.toggle('light');
+  localStorage.setItem('theme',isLight?'light':'dark');
+  document.getElementById('theme').textContent=isLight?'☀':'☾';
+}
+document.getElementById('theme').addEventListener('click',toggleTheme);
+
+window._escapeHtml=(value)=>{
+  const node=document.createElement('div');
+  node.textContent=String(value??'');
+  return node.innerHTML;
+};
+
+// Toast
+window._toast=(msg,type='warn')=>{
+  const c=document.getElementById('toasts');
+  const t=document.createElement('div');
+  t.className=`toast ${type}`;
+  t.textContent=msg;
+  c.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3200);
+};
+</script>
+</body>
+</html>

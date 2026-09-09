@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "MCP：ingest 写库、read 只读、summarize 只打模型",
+    "locale": "zh-CN",
+    "output": "03-mcp-tool-sequence.html",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1080, 740],
+    "views": [
+      {
+        "id": "ingest",
+        "label": "ingest 写缓存",
+        "focus": ["agent", "mcp", "reading", "workflow", "wechat", "sqlite"],
+        "note": "ingest_article 是唯一会抓公众号并写 SQLite 的工具。"
+      },
+      {
+        "id": "read",
+        "label": "read 不联网",
+        "focus": ["agent", "mcp", "reading", "sqlite"],
+        "note": "read_article 只拿 UUID，从缓存投影一页 Markdown。"
+      },
+      {
+        "id": "summarize",
+        "label": "summarize 不抓取",
+        "focus": ["agent", "mcp", "workflow", "sqlite", "deepseek"],
+        "note": "summarize_article 走 summarize_cached，访问 DeepSeek，不抓公众号。"
+      }
+    ]
+  },
+  "participants": [
+    { "id": "agent", "type": "external", "label": "Agent", "sublabel": "调用方" },
+    { "id": "mcp", "type": "frontend", "label": "MCP", "sublabel": "校验 / 映射错误" },
+    { "id": "reading", "type": "backend", "label": "ReadingService", "sublabel": "ingest / read" },
+    { "id": "workflow", "type": "backend", "label": "WorkflowService", "sublabel": "summarize_cached" },
+    { "id": "wechat", "type": "external", "label": "公众号", "sublabel": "仅 ingest" },
+    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": "本地缓存" },
+    { "id": "deepseek", "type": "cloud", "label": "DeepSeek", "sublabel": "仅摘要" }
+  ],
+  "segments": [
+    { "from": 140, "to": 365, "label": "ingest_article" },
+    { "from": 378, "to": 500, "label": "read_article" },
+    { "from": 512, "to": 670, "label": "summarize_article" }
+  ],
+  "messages": [
+    { "id": "call-ingest", "from": "agent", "to": "mcp", "y": 160, "label": "ingest_article(url)", "variant": "emphasis" },
+    { "id": "ingest-svc", "from": "mcp", "to": "reading", "y": 192, "label": "ingest", "variant": "emphasis" },
+    { "id": "fetch-on-miss", "from": "reading", "to": "workflow", "y": 224, "label": "fetch_article", "variant": "default" },
+    { "id": "scrape", "from": "workflow", "to": "wechat", "y": 256, "label": "scrape", "variant": "security" },
+    { "id": "html-back", "from": "wechat", "to": "workflow", "y": 288, "label": "清洗后 HTML", "variant": "return" },
+    { "id": "save-article", "from": "reading", "to": "sqlite", "y": 320, "label": "save articles", "variant": "emphasis" },
+    { "id": "ingest-return", "from": "mcp", "to": "agent", "y": 352, "label": "article_id + sections", "variant": "return" },
+    { "id": "call-read", "from": "agent", "to": "mcp", "y": 392, "label": "read_article(id, cursor)", "variant": "emphasis" },
+    { "id": "read-svc", "from": "mcp", "to": "reading", "y": 424, "label": "read 只读", "variant": "default" },
+    { "id": "load-cache", "from": "reading", "to": "sqlite", "y": 456, "label": "get(id)", "variant": "default" },
+    { "id": "page-return", "from": "mcp", "to": "agent", "y": 488, "label": "Markdown + next_cursor", "variant": "return" },
+    { "id": "call-sum", "from": "agent", "to": "mcp", "y": 528, "label": "summarize_article(id)", "variant": "emphasis" },
+    { "id": "sum-cached", "from": "mcp", "to": "workflow", "y": 560, "label": "summarize_cached", "variant": "emphasis" },
+    { "id": "llm", "from": "workflow", "to": "deepseek", "y": 592, "label": "一次 JSON 调用", "variant": "default" },
+    { "id": "save-sum", "from": "workflow", "to": "sqlite", "y": 624, "label": "save summaries", "variant": "dashed" },
+    { "id": "sum-return", "from": "mcp", "to": "agent", "y": 656, "label": "四字段摘要", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "mcp", "from": 160, "to": 356, "type": "frontend" },
+    { "participant": "reading", "from": 192, "to": 328, "type": "backend" },
+    { "participant": "workflow", "from": 224, "to": 292, "type": "backend" },
+    { "participant": "wechat", "from": 251, "to": 292, "type": "external" },
+    { "participant": "sqlite", "from": 315, "to": 332, "type": "database" },
+    { "participant": "mcp", "from": 392, "to": 492, "type": "frontend" },
+    { "participant": "reading", "from": 424, "to": 468, "type": "backend" },
+    { "participant": "sqlite", "from": 451, "to": 468, "type": "database" },
+    { "participant": "mcp", "from": 528, "to": 660, "type": "frontend" },
+    { "participant": "workflow", "from": 560, "to": 632, "type": "backend" },
+    { "participant": "deepseek", "from": 587, "to": 608, "type": "cloud" },
+    { "participant": "sqlite", "from": 619, "to": 632, "type": "database" }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "副作用拆开",
+      "items": [
+        "ingest 才抓公众号写库；read 不联网；summarize 只打 DeepSeek"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Agent 怎么读",
+      "items": [
+        "先 sections / cursor 跳读；正文标 untrusted_web_content"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "失败码",
+      "items": [
+        "未缓存 article_not_found；超长 article_too_long；无密钥 summarizer_unavailable"
+      ]
+    }
+  ]
+}

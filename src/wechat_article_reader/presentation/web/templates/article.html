@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1>单篇文章处理</h1>
+  <p>抓取 → 摘要 → 下载 Markdown / HTML</p>
+</div>
+
+<div class="card">
+  <div class="card-title">文章链接</div>
+  <input type="url" id="url" placeholder="https://mp.weixin.qq.com/s/...">
+
+  <div class="btn-group" id="actions">
+    <button class="btn" data-action="fetch">原文抓取</button>
+    <button class="btn" data-action="summarize">原文摘要</button>
+    <button class="btn" data-action="export">原文抓取+摘要</button>
+  </div>
+  <div id="go-area" style="display:none;margin-top:10px">
+    <button class="btn btn-primary" id="go-btn">▶ 开始处理</button>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<a id="dl" style="display:none" download></a>
+
+<script nonce="{{ request.state.csp_nonce }}">
+const $=id=>document.getElementById(id);
+let curAction=null;
+let lastSummary=null;
+let processing=false;
+let loadingTimer=null;
+let loadingStartedAt=0;
+
+
+function selectAction(btn){
+  if(processing){_toast('请等待当前任务完成','warn');return}
+  document.querySelectorAll('#actions .btn').forEach(b=>{b.className='btn'});
+  btn.className='btn btn-primary';
+  curAction=btn.dataset.action;
+  $('go-area').style.display='block';
+  $('out').innerHTML='';
+}
+
+function loading(msg){
+  loadingStartedAt=Date.now();
+  const render=()=>{
+    const seconds=Math.floor((Date.now()-loadingStartedAt)/1000);
+    $('out').innerHTML=`<div class="loading"><span class="spinner"></span><span>${msg}… ${seconds}s</span><small>DeepSeek 通常需要数十秒；长文会更久。</small></div>`;
+  };
+  render();
+  clearInterval(loadingTimer);
+  loadingTimer=setInterval(render,1000);
+}
+function stopLoading(){clearInterval(loadingTimer);loadingTimer=null;return Math.max(0,Date.now()-loadingStartedAt);}
+
+function dlBar(articleUrl){
+  return `<div class="btn-group" style="margin:10px 0">
+    <button class="btn btn-sm download-action" data-target="markdown">⬇ 下载 MD</button>
+    <button class="btn btn-sm download-action" data-target="html">⬇ 下载 HTML</button>
+  </div>`;
+}
+
+function bindDownloads(articleUrl){
+  document.querySelectorAll('.download-action').forEach(btn=>{
+    btn.addEventListener('click',()=>dlExport(articleUrl,btn.dataset.target));
+  });
+}
+
+function summaryDetails(summary){
+  const points=(summary.key_points||[])
+    .map(point=>`<li>${_escapeHtml(point)}</li>`)
+    .join('');
+  const tags=(summary.tags||[])
+    .map(tag=>`<span class="tag">${_escapeHtml(tag)}</span>`)
+    .join(' ');
+  return `
+    <h4 style="margin-top:12px;font-size:13px;color:#a1a1aa">摘要</h4>
+    <div class="body">${summary.summary_html}</div>
+    ${points ? `<h4 style="margin-top:16px;font-size:13px;color:#a1a1aa">关键要点</h4><ul class="summary-points">${points}</ul>` : ''}
+    ${summary.one_sentence ? `<h4 style="margin-top:16px;font-size:13px;color:#a1a1aa">一句话总结</h4><p class="body">${_escapeHtml(summary.one_sentence)}</p>` : ''}
+    ${tags ? `<h4 class="summary-tags-title">标签</h4><div class="summary-tags">${tags}</div>` : ''}`;
+}
+
+function prepareArticleImages(){
+  document.querySelectorAll('.wechat-content img').forEach(image=>{
+    image.loading='lazy';
+    image.decoding='async';
+    image.addEventListener('error',()=>{
+      image.classList.add('image-load-failed');
+      image.alt=image.alt || '图片加载失败';
+      image.title='图片加载失败';
+      const originalLink=document.createElement('a');
+      originalLink.href=image.currentSrc || image.src;
+      originalLink.target='_blank';
+      originalLink.rel='noopener noreferrer';
+      originalLink.textContent='图片加载失败，打开原图';
+      originalLink.className='image-load-failed-link';
+      image.insertAdjacentElement('afterend',originalLink);
+    },{once:true});
+  });
+}
+
+async function dlExport(articleUrl,target){
+  _toast('导出中...','info');
+  try{
+    const isFetch=curAction==='fetch';
+    const isSummarize=curAction==='summarize';
+    const body={
+      url:articleUrl,target,
+      skip_summary:isFetch,
+      include_body:!isSummarize,
+    };
+    if(!isFetch && lastSummary){
+      body.summary_content=lastSummary.overview;
+      body.key_points=lastSummary.key_points||[];
+    }
+    const r=await fetch('/api/article/export',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    const d=await r.json();
+    if(!d.success){_toast(d.error,'err');return}
+    const a=$('dl');a.href=d.download_url;a.click();
+  }catch(e){_toast(e.message,'err')}
+}
+
+async function go(){
+  if(processing){_toast('正在处理中...','warn');return}
+  const url=$('url').value.trim();
+  if(!url){_toast('请输入文章链接','err');return}
+  if(!curAction){return}
+  processing=true;
+  try{
+
+  if(curAction==='fetch'){
+    loading('抓取中');
+    const r=await fetch('/api/article/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const d=await r.json();
+    stopLoading();
+    if(!r.ok || !d.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(d.error||'抓取请求失败')}</div>`;_toast(d.error||'抓取请求失败','err');return}
+    $('out').innerHTML=`<div class="result ok">
+      <h3>${_escapeHtml(d.title)}</h3>
+      <div class="meta">${_escapeHtml(d.author)} · ${_escapeHtml(d.account_name)} · ${d.word_count.toLocaleString()} 字${d.publish_time ? ' · '+_escapeHtml(d.publish_time) : ''}</div>
+      ${dlBar(url)}
+      <div class="wechat-content">${d.content_html}</div>
+    </div>`;
+    bindDownloads(url);
+    prepareArticleImages();
+    _toast('抓取成功','ok');
+
+  }else if(curAction==='summarize'){
+    loading('生成摘要中');
+    const r=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const d=await r.json();
+    const elapsedMs=stopLoading();
+    if(!r.ok || !d.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(d.error||'摘要请求失败')}</div>`;_toast(d.error||'摘要请求失败','err');return}
+    lastSummary={overview:d.summary,key_points:d.key_points,tags:d.tags,one_sentence:d.one_sentence};
+    $('out').innerHTML=`<div class="result ok">
+      <h3>摘要完成</h3>
+      <div class="meta">DeepSeek · 耗时 ${(elapsedMs/1000).toFixed(1)}s</div>
+      ${dlBar(url)}
+      ${summaryDetails(d)}
+    </div>`;
+    bindDownloads(url);
+    _toast('摘要完成','ok');
+
+  }else{
+    loading('抓取中');
+    const fr=await fetch('/api/article/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const fd=await fr.json();
+    stopLoading();
+    if(!fr.ok || !fd.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(fd.error||'抓取请求失败')}</div>`;_toast(fd.error||'抓取请求失败','err');return}
+    loading('生成摘要中');
+    const sr=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const sd=await sr.json();
+    const elapsedMs=stopLoading();
+    if(!sr.ok || !sd.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(sd.error||'摘要请求失败')}</div>`;_toast(sd.error||'摘要请求失败','err');return}
+    lastSummary={overview:sd.summary,key_points:sd.key_points,tags:sd.tags,one_sentence:sd.one_sentence};
+    $('out').innerHTML=`<div class="result ok">
+      <h3>${_escapeHtml(fd.title)}</h3>
+      <div class="meta">${_escapeHtml(fd.author)} · ${_escapeHtml(fd.account_name)} · ${fd.word_count.toLocaleString()} 字${fd.publish_time ? ' · '+_escapeHtml(fd.publish_time) : ''}</div>
+      ${dlBar(url)}
+      <div class="meta">DeepSeek · 耗时 ${(elapsedMs/1000).toFixed(1)}s</div>
+      ${summaryDetails(sd)}
+      <h4 style="margin-top:16px;font-size:13px;color:#a1a1aa">原文</h4>
+      <div class="wechat-content">${fd.content_html}</div>
+    </div>`;
+    bindDownloads(url);
+    prepareArticleImages();
+    _toast('抓取+摘要完成','ok');
+  }
+
+  }catch(error){
+    stopLoading();
+    const message=error instanceof Error ? error.message : '网络请求失败，请稍后重试';
+    $('out').innerHTML=`<div class="result err">${_escapeHtml(message)}</div>`;
+    _toast(message,'err');
+  }finally{
+  processing=false;
+  // hide start button but keep curAction for download context
+  document.querySelectorAll('#actions .btn').forEach(b=>{b.className='btn'});
+  $('go-area').style.display='none';
+  }
+}
+document.querySelectorAll('#actions .btn').forEach(btn=>btn.addEventListener('click',()=>selectAction(btn)));
+$('go-btn').addEventListener('click',go);
+</script>
+{% endblock %}
