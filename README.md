@@ -1,8 +1,6 @@
 # 微信文章阅读服务
 
-个人开源小工具：一篇微信公众号文章 → SQLite → **同一套 Markdown 投影** → 导出。摘要可选；没有 API Key 仍可抓取、阅读和导出正文。
-
-它不是知识库、内部 Agent 平台，也不会替你扫完整个公众号。
+一篇微信公众号文章 → SQLite → **同一套 Markdown 投影** → 导出。你贴进来的那一篇可以抓取、缓存、阅读；摘要可选，没有 API Key 也能导出正文。
 
 ```text
 微信公众号 URL
@@ -17,7 +15,7 @@
 
 本地 Agent 往往打不开公众号页（反爬、登录墙、HTML 噪声、长文塞爆上下文）。本项目把阅读收成一条可控管道。
 
-**人**用 CLI / Web：可贴一条 URL，一次完成抓取、阅读、可选摘要和导出。终端翻页用 `read` 给人看一页，不是 Agent 默认。Web 三种启动方式见下文「Web」。
+**人**用 CLI / Web：可贴一条 URL，一次完成抓取、阅读、可选摘要和导出。终端 `read` 给人翻一页。Web 三种启动方式见下文「Web」。
 
 **能读工作区的本地 Agent**默认导出再读文件：
 
@@ -137,7 +135,7 @@ python -m wechat_article_reader web
 
 - `GET /api/article/markdown` 走与 MCP 相同的分页 Markdown 投影，**默认无图**（`include_images=false`）。
 - 下载 Markdown 默认无图；下载 HTML 仍可带图。
-- 页面里的「原文」是清洗后的公众号 HTML，不是导出文件。
+- 页面里的「原文」展示清洗后的公众号 HTML。
 
 ## MCP
 
