@@ -9,70 +9,64 @@
     "viewBox": [1280, 720],
     "views": [
       {
-        "id": "human-path",
+        "id": "humanPath",
         "label": "人机路径",
-        "focus": ["human", "workflow", "fetch_uc", "summarize_uc", "export_uc"],
-        "note": "CLI / Web 一次 fetch 或 process 可以抓、摘要、导出。"
+        "focus": ["humanUi", "workFacade", "ucFetch", "ucSum", "ucExport"],
+        "note": "CLI / Web（含 run_web.pyw）一次 fetch 或 process 可以抓、摘要、导出。"
       },
       {
-        "id": "agent-path",
+        "id": "agentPath",
         "label": "Agent 路径",
-        "focus": ["agent", "reading", "workflow", "sqlite"],
+        "focus": ["agentUi", "readFacade", "workFacade", "storeSql"],
         "note": "ingest 写缓存；read 只拿 UUID；摘要必须走 summarize_cached。"
       },
       {
-        "id": "shared-core",
+        "id": "sharedCore",
         "label": "共用内核",
-        "focus": ["workflow", "fetch_uc", "summarize_uc", "sqlite"],
+        "focus": ["workFacade", "ucFetch", "ucSum", "storeSql"],
         "note": "阅读门面缓存未命中时仍调用 workflow.fetch_article，不另写爬虫。"
       }
     ]
   },
   "components": [
-    { "id": "human", "type": "frontend", "label": "CLI / Web", "sublabel": "人机入口", "pos": [80, 90], "size": [150, 64] },
-    { "id": "agent", "type": "external", "label": "MCP Agent", "sublabel": "工具调用", "pos": [80, 380], "size": [150, 64] },
-    { "id": "workflow", "type": "backend", "label": "ArticleWorkflowService", "sublabel": "fetch / process / 导出", "pos": [400, 90], "size": [230, 72], "tag": "人机门面" },
-    { "id": "reading", "type": "backend", "label": "ArticleReadingService", "sublabel": "ingest / read / toc", "pos": [400, 380], "size": [230, 72], "tag": "阅读契约" },
-    { "id": "fetch_uc", "type": "backend", "label": "FetchArticleUseCase", "sublabel": "抓取 + URL 缓存", "pos": [780, 60], "size": [190, 64] },
-    { "id": "summarize_uc", "type": "backend", "label": "SummarizeArticleUseCase", "sublabel": "DeepSeek", "pos": [780, 200], "size": [190, 64] },
-    { "id": "export_uc", "type": "backend", "label": "ExportArticleUseCase", "sublabel": "HTML / Markdown", "pos": [780, 340], "size": [190, 64] },
-    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": "StoragePort", "pos": [400, 560], "size": [230, 64] }
+    { "id": "humanUi", "type": "frontend", "label": "CLI / Web", "sublabel": "web / pyw / cmd", "pos": [70, 90], "size": [170, 64] },
+    { "id": "agentUi", "type": "external", "label": "MCP Agent", "sublabel": "四工具", "pos": [70, 400], "size": [170, 64] },
+    { "id": "workFacade", "type": "backend", "label": "ArticleWorkflowService", "sublabel": "fetch / process / 导出", "pos": [390, 90], "size": [240, 72], "tag": "人机门面" },
+    { "id": "readFacade", "type": "backend", "label": "ArticleReadingService", "sublabel": "ingest / read / toc", "pos": [390, 400], "size": [240, 72], "tag": "阅读契约" },
+    { "id": "ucFetch", "type": "backend", "label": "FetchArticleUseCase", "sublabel": "抓取 + URL 缓存", "pos": [800, 60], "size": [200, 64] },
+    { "id": "ucSum", "type": "backend", "label": "SummarizeArticleUseCase", "sublabel": "DeepSeek", "pos": [800, 210], "size": [200, 64] },
+    { "id": "ucExport", "type": "backend", "label": "ExportArticleUseCase", "sublabel": "MD 默认无图", "pos": [800, 360], "size": [200, 64] },
+    { "id": "storeSql", "type": "database", "label": "SQLite", "sublabel": "StoragePort", "pos": [390, 560], "size": [240, 64] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "features 门面", "wraps": ["workflow", "reading"] },
-    { "kind": "region", "label": "application 用例", "wraps": ["fetch_uc", "summarize_uc", "export_uc"] }
+    { "kind": "region", "label": "features 门面", "wraps": ["workFacade", "readFacade"] },
+    { "kind": "region", "label": "application 用例", "wraps": ["ucFetch", "ucSum", "ucExport"] }
   ],
   "connections": [
-    { "id": "human-wf", "from": "human", "to": "workflow", "label": "fetch / process", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
-    { "id": "agent-read", "from": "agent", "to": "reading", "label": "ingest / read", "variant": "emphasis", "fromSide": "right", "toSide": "left", "labelDy": 46 },
-    { "id": "agent-sum", "from": "agent", "to": "workflow", "label": "summarize_cached", "variant": "dashed", "fromSide": "top", "toSide": "left" },
-    { "id": "read-fetch", "from": "reading", "to": "workflow", "label": "未命中则 fetch_article", "fromSide": "top", "toSide": "bottom", "labelDy": -24 },
-    { "id": "wf-fetch", "from": "workflow", "to": "fetch_uc", "fromSide": "right", "toSide": "left" },
-    { "id": "wf-sum", "from": "workflow", "to": "summarize_uc", "fromSide": "right", "toSide": "left" },
-    { "id": "wf-export", "from": "workflow", "to": "export_uc", "variant": "dashed", "fromSide": "right", "toSide": "left" },
-    { "id": "read-db", "from": "reading", "to": "sqlite", "label": "get / save", "fromSide": "bottom", "toSide": "top", "labelDy": 24 }
+    { "id": "humanToWf", "from": "humanUi", "to": "workFacade", "label": "fetch / process", "variant": "emphasis" },
+    { "id": "agentToRead", "from": "agentUi", "to": "readFacade", "label": "ingest / read", "variant": "emphasis", "labelDy": 46 },
+    { "id": "agentToSum", "from": "agentUi", "to": "workFacade", "label": "summarize_cached", "variant": "dashed", "fromSide": "top", "toSide": "left" },
+    { "id": "readToWf", "from": "readFacade", "to": "workFacade", "label": "未命中则 fetch_article" },
+    { "id": "wfToFetch", "from": "workFacade", "to": "ucFetch" },
+    { "id": "wfToSum", "from": "workFacade", "to": "ucSum" },
+    { "id": "wfToExport", "from": "workFacade", "to": "ucExport", "variant": "dashed" },
+    { "id": "readToDb", "from": "readFacade", "to": "storeSql", "label": "get / save", "labelDy": 24 }
   ],
   "cards": [
     {
       "dot": "emerald",
       "title": "为什么拆两个",
-      "items": [
-        "人可以一次 fetch 做完；Agent 必须分清会不会联网写库"
-      ]
+      "items": ["人可以一次 fetch 做完；Agent 必须分清会不会联网写库"]
     },
     {
       "dot": "rose",
       "title": "摘要不隐式抓取",
-      "items": [
-        "summarize_article 只调 summarize_cached，未缓存即失败"
-      ]
+      "items": ["summarize_article 只调 summarize_cached，未缓存即失败"]
     },
     {
       "dot": "cyan",
       "title": "仍然一套爬虫",
-      "items": [
-        "ingest 未命中时复用 fetch_article，不另写解析"
-      ]
+      "items": ["ingest 未命中时复用 fetch_article，不另写解析"]
     }
   ]
 }

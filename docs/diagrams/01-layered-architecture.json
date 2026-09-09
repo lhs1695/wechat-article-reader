@@ -2,81 +2,75 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "分层依赖：入口共用领域，适配器向外注入",
+    "title": "分层依赖：三个入口汇到同一套 features",
     "locale": "zh-CN",
     "output": "01-layered-architecture.html",
     "quality_profile": "showcase",
-    "viewBox": [1280, 780],
+    "viewBox": [1280, 740],
     "views": [
       {
-        "id": "entry-to-domain",
-        "label": "入口到领域",
-        "focus": ["cli", "web", "mcp", "features", "application", "domain"],
-        "note": "三个入口汇到同一套 features，再进入用例与领域。"
+        "id": "entries",
+        "label": "三个入口",
+        "focus": ["entryCli", "entryWeb", "entryMcp", "featHub"],
+        "note": "CLI、Web（含 run_web.pyw / run_web.cmd）、MCP 都只适配协议。"
       },
       {
-        "id": "adapters-in",
-        "label": "基础设施注入",
-        "focus": ["application", "scraper", "sqlite", "deepseek", "exporters"],
-        "note": "抓取、SQLite、DeepSeek、导出实现端口，由容器注入用例。"
+        "id": "ports",
+        "label": "端口注入",
+        "focus": ["appCore", "adaptScrape", "storeSql", "llmDs", "adaptExport"],
+        "note": "抓取、SQLite、DeepSeek、导出实现端口，由容器注入。"
       },
       {
-        "id": "fetch-boundary",
+        "id": "boundary",
         "label": "抓取边界",
-        "focus": ["scraper", "wechat"],
+        "focus": ["adaptScrape", "hostWx"],
         "note": "只允许 mp.weixin.qq.com，SSRF 与体积限制在抓取适配器。"
       }
     ]
   },
   "components": [
-    { "id": "cli", "type": "frontend", "label": "CLI", "sublabel": "Click", "pos": [80, 70], "size": [140, 64] },
-    { "id": "web", "type": "frontend", "label": "Web", "sublabel": "FastAPI", "pos": [340, 70], "size": [140, 64] },
-    { "id": "mcp", "type": "frontend", "label": "MCP", "sublabel": "FastMCP", "pos": [600, 70], "size": [140, 64] },
-    { "id": "features", "type": "backend", "label": "features", "sublabel": "两个门面服务", "pos": [330, 250], "size": [160, 68], "tag": "稳定契约" },
-    { "id": "application", "type": "backend", "label": "application", "sublabel": "用例 + 端口", "pos": [330, 430], "size": [160, 68] },
-    { "id": "domain", "type": "backend", "label": "domain", "sublabel": "文章 / URL / 摘要", "pos": [330, 610], "size": [160, 68] },
-    { "id": "scraper", "type": "security", "label": "WechatHttpxScraper", "sublabel": "host / SSRF / 清洗", "pos": [40, 430], "size": [190, 68] },
-    { "id": "wechat", "type": "external", "label": "微信公众号", "sublabel": "mp.weixin.qq.com", "pos": [40, 610], "size": [190, 68] },
-    { "id": "sqlite", "type": "database", "label": "SQLite", "sublabel": "articles / summaries", "pos": [620, 430], "size": [170, 68] },
-    { "id": "deepseek", "type": "cloud", "label": "DeepSeek", "sublabel": "一次 JSON 摘要", "pos": [860, 250], "size": [160, 68] },
-    { "id": "exporters", "type": "backend", "label": "导出器", "sublabel": "HTML / Markdown", "pos": [860, 610], "size": [160, 68] }
+    { "id": "entryCli", "type": "frontend", "label": "CLI", "sublabel": "Click", "pos": [80, 70], "size": [150, 64] },
+    { "id": "entryWeb", "type": "frontend", "label": "Web", "sublabel": "FastAPI :8000", "pos": [340, 70], "size": [170, 64], "tag": "pyw / cmd" },
+    { "id": "entryMcp", "type": "frontend", "label": "MCP", "sublabel": "FastMCP", "pos": [620, 70], "size": [150, 64] },
+    { "id": "featHub", "type": "backend", "label": "features", "sublabel": "两个门面服务", "pos": [330, 250], "size": [180, 68], "tag": "稳定契约" },
+    { "id": "appCore", "type": "backend", "label": "application", "sublabel": "用例 + 端口", "pos": [330, 430], "size": [180, 68] },
+    { "id": "domainCore", "type": "backend", "label": "domain", "sublabel": "文章 / URL / 摘要", "pos": [330, 610], "size": [180, 68] },
+    { "id": "adaptScrape", "type": "security", "label": "WechatHttpxScraper", "sublabel": "host / SSRF / 清洗", "pos": [40, 430], "size": [200, 68] },
+    { "id": "hostWx", "type": "external", "label": "微信公众号", "sublabel": "仅公众号文章", "pos": [40, 610], "size": [200, 68] },
+    { "id": "storeSql", "type": "database", "label": "SQLite", "sublabel": "articles / summaries", "pos": [640, 430], "size": [180, 68] },
+    { "id": "llmDs", "type": "cloud", "label": "DeepSeek", "sublabel": "一次 JSON 摘要", "pos": [900, 250], "size": [160, 68] },
+    { "id": "adaptExport", "type": "backend", "label": "导出器", "sublabel": "HTML / Markdown", "pos": [900, 610], "size": [160, 68] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "presentation / mcp", "wraps": ["cli", "web", "mcp"] }
+    { "kind": "region", "label": "presentation / mcp", "wraps": ["entryCli", "entryWeb", "entryMcp"] }
   ],
   "connections": [
-    { "id": "cli-features", "from": "cli", "to": "features", "label": "人机命令", "variant": "emphasis", "fromSide": "bottom", "toSide": "left" },
-    { "id": "web-features", "from": "web", "to": "features", "label": "页面 / API", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
-    { "id": "mcp-features", "from": "mcp", "to": "features", "label": "工具调用", "fromSide": "bottom", "toSide": "right" },
-    { "id": "features-app", "from": "features", "to": "application", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
-    { "id": "app-domain", "from": "application", "to": "domain", "label": "实体与值对象", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
-    { "id": "app-scraper", "from": "application", "to": "scraper", "label": "ScraperPort", "fromSide": "left", "toSide": "right" },
-    { "id": "scraper-wechat", "from": "scraper", "to": "wechat", "label": "HTTPS", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
-    { "id": "app-sqlite", "from": "application", "to": "sqlite", "label": "StoragePort", "fromSide": "right", "toSide": "left" },
-    { "id": "app-deepseek", "from": "application", "to": "deepseek", "label": "SummarizerPort", "variant": "dashed", "fromSide": "top", "toSide": "left" },
-    { "id": "app-export", "from": "application", "to": "exporters", "label": "ExporterPort", "variant": "dashed", "fromSide": "right", "toSide": "left" }
+    { "id": "cliToFeat", "from": "entryCli", "to": "featHub", "label": "人机命令", "variant": "emphasis", "fromSide": "bottom", "toSide": "left" },
+    { "id": "webToFeat", "from": "entryWeb", "to": "featHub", "label": "页面 / API", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "id": "mcpToFeat", "from": "entryMcp", "to": "featHub", "label": "四工具", "variant": "emphasis", "fromSide": "bottom", "toSide": "right" },
+    { "id": "featToApp", "from": "featHub", "to": "appCore", "variant": "emphasis" },
+    { "id": "appToDomain", "from": "appCore", "to": "domainCore", "label": "实体与值对象", "variant": "emphasis", "labelDy": 24 },
+    { "id": "appToScrape", "from": "appCore", "to": "adaptScrape", "label": "ScraperPort" },
+    { "id": "scrapeToHost", "from": "adaptScrape", "to": "hostWx", "label": "HTTPS", "variant": "security", "labelDy": 24 },
+    { "id": "appToSql", "from": "appCore", "to": "storeSql", "label": "StoragePort" },
+    { "id": "appToLlm", "from": "appCore", "to": "llmDs", "label": "SummarizerPort", "variant": "dashed", "fromSide": "top", "toSide": "left" },
+    { "id": "appToExport", "from": "appCore", "to": "adaptExport", "label": "ExporterPort", "variant": "dashed" }
   ],
   "cards": [
     {
       "dot": "emerald",
       "title": "依赖向内",
-      "items": [
-        "入口只适配协议；features 给稳定门面，domain 只有文章与摘要"
-      ]
+      "items": ["入口只适配协议；features 给稳定门面，domain 只有文章与摘要"]
     },
     {
       "dot": "cyan",
-      "title": "适配器在外",
-      "items": [
-        "抓取、SQLite、DeepSeek、导出由容器注入端口"
-      ]
+      "title": "Web 怎么起",
+      "items": ["python -m wechat_article_reader web、run_web.pyw、run_web.cmd 同一应用"]
     },
     {
       "dot": "rose",
       "title": "抓取边界",
-      "items": [
-        "只允许 mp.weixin.qq.com，SSRF 与体积限制在适配器"
-      ]
+      "items": ["只允许 mp.weixin.qq.com，SSRF 与体积限制在适配器"]
     }
   ]
 }

@@ -2,29 +2,29 @@
   "schema_version": 1,
   "diagram_type": "workflow",
   "meta": {
-    "title": "阅读投影：HTML 分块、目录、软分页",
+    "title": "阅读投影：分块、按节切片、软分页",
     "locale": "zh-CN",
     "output": "05-reading-projection.html",
     "quality_profile": "showcase",
-    "viewBox": [1080, 720],
+    "viewBox": [1280, 720],
     "views": [
       {
-        "id": "project",
+        "id": "projectView",
         "label": "投影",
-        "focus": ["html", "projector", "blocks", "sections"],
+        "focus": ["htmlCache", "projWalk", "blockList", "tocSecs"],
         "note": "清洗后的 HTML 按文档顺序拆块；sections 由 heading 推导。"
       },
       {
-        "id": "page",
-        "label": "分页",
-        "focus": ["blocks", "paginate", "markdown"],
-        "note": "按渲染长度累加，硬顶是 max_chars；列表尽量整组。"
+        "id": "pageView",
+        "label": "成页",
+        "focus": ["blockList", "softPage", "mdPage"],
+        "note": "不传 section 且全文不超过 max_chars 则一次返回；传 section 只切该节。"
       },
       {
-        "id": "overflow",
+        "id": "overflowView",
         "label": "超大块",
-        "focus": ["paginate", "too_large"],
-        "note": "单块超过 20000 才 page_too_large；否则可整块返回。"
+        "focus": ["softPage", "errLarge"],
+        "note": "单块超过 20000 才 page_too_large；Markdown 页默认无图。"
       }
     ]
   },
@@ -41,47 +41,41 @@
     { "id": "emit", "label": "成页", "fromCol": 4, "toCol": 5 }
   ],
   "groups": [
-    { "id": "runtime_only", "label": "读时现算，不入库", "lane": "project", "fromCol": 2, "toCol": 3, "variant": "emphasis" }
+    { "id": "runtimeOnly", "label": "读时现算，不入库", "lane": "project", "fromCol": 2, "toCol": 3, "variant": "emphasis" }
   ],
-  "mainPath": ["html", "projector", "blocks", "sections", "paginate", "markdown"],
+  "mainPath": ["htmlCache", "projWalk", "blockList", "tocSecs", "softPage", "mdPage"],
   "nodes": [
-    { "id": "html", "lane": "source", "col": 0, "type": "database", "label": "content_html", "sublabel": "articles 表" },
-    { "id": "projector", "lane": "source", "col": 1, "type": "backend", "label": "Projector", "sublabel": "按序走查" },
-    { "id": "blocks", "lane": "project", "col": 2, "type": "backend", "label": "blocks", "sublabel": "块类型" },
-    { "id": "sections", "lane": "project", "col": 3, "type": "backend", "label": "sections", "sublabel": "默认压到 H2" },
-    { "id": "paginate", "lane": "page", "col": 4, "type": "backend", "label": "软分页", "sublabel": "max_chars" },
-    { "id": "markdown", "lane": "out", "col": 5, "type": "frontend", "label": "Markdown 页", "sublabel": "cursor / next_cursor" },
-    { "id": "too_large", "lane": "exceptions", "col": 5, "type": "security", "label": "page_too_large", "sublabel": "单块 > 20000" }
+    { "id": "htmlCache", "lane": "source", "col": 0, "type": "database", "label": "content_html" },
+    { "id": "projWalk", "lane": "source", "col": 1, "type": "backend", "label": "Projector" },
+    { "id": "blockList", "lane": "project", "col": 2, "type": "backend", "label": "blocks" },
+    { "id": "tocSecs", "lane": "project", "col": 3, "type": "backend", "label": "sections" },
+    { "id": "softPage", "lane": "page", "col": 4, "type": "backend", "label": "软分页" },
+    { "id": "mdPage", "lane": "out", "col": 5, "type": "frontend", "label": "Markdown 页" },
+    { "id": "errLarge", "lane": "exceptions", "col": 5, "type": "security", "label": "page_too_large" }
   ],
   "edges": [
-    { "id": "load-html", "from": "html", "to": "projector", "label": "project", "variant": "emphasis" },
-    { "id": "to-blocks", "from": "projector", "to": "blocks", "variant": "emphasis" },
-    { "id": "to-sections", "from": "blocks", "to": "sections", "label": "由 heading 推导", "labelDy": -22 },
-    { "id": "to-page", "from": "sections", "to": "paginate", "variant": "emphasis" },
-    { "id": "to-md", "from": "paginate", "to": "markdown", "variant": "emphasis" },
-    { "id": "overflow", "from": "paginate", "to": "too_large", "variant": "security", "role": "error" }
+    { "id": "loadHtml", "from": "htmlCache", "to": "projWalk", "label": "project", "variant": "emphasis" },
+    { "id": "toBlocks", "from": "projWalk", "to": "blockList", "variant": "emphasis" },
+    { "id": "toSecs", "from": "blockList", "to": "tocSecs", "label": "由 heading 推导", "labelDy": -22 },
+    { "id": "toPage", "from": "tocSecs", "to": "softPage", "variant": "emphasis" },
+    { "id": "toMd", "from": "softPage", "to": "mdPage", "variant": "emphasis" },
+    { "id": "overflow", "from": "softPage", "to": "errLarge", "variant": "security", "role": "error" }
   ],
   "cards": [
     {
       "dot": "emerald",
       "title": "公开承诺",
-      "items": [
-        "对外只有 Markdown 页、cursor、可选 section；block id 不对外"
-      ]
+      "items": ["对外只有 Markdown 页、cursor、可选 section；block id 不对外"]
     },
     {
       "dot": "cyan",
       "title": "目录与跳章",
-      "items": [
-        "默认 toc_level=2；无 H2 时对齐最浅标题"
-      ]
+      "items": ["默认 toc_level=2；传 section 只返回该节，节尾丢掉模板装饰"]
     },
     {
       "dot": "orange",
       "title": "软边界",
-      "items": [
-        "列表尽量整组；溢出时把未写完的 H2/H3 留给下一页"
-      ]
+      "items": ["列表尽量整组；CLI / Web / MCP 阅读页默认不含图"]
     }
   ]
 }

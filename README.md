@@ -17,7 +17,7 @@
 
 本地 Agent 往往打不开公众号页（反爬、登录墙、HTML 噪声、长文塞爆上下文）。本项目把阅读收成一条可控管道。
 
-**人**用 CLI / Web：可贴一条 URL，一次完成抓取、阅读、可选摘要和导出。终端翻页用 `read` 给人看一页，不是 Agent 默认。
+**人**用 CLI / Web：可贴一条 URL，一次完成抓取、阅读、可选摘要和导出。终端翻页用 `read` 给人看一页，不是 Agent 默认。Web 三种启动方式见下文「Web」。
 
 **能读工作区的本地 Agent**默认导出再读文件：
 
@@ -107,6 +107,7 @@ python -m wechat_article_reader read "ARTICLE_UUID" --images
 
 python -m wechat_article_reader batch URL_1 URL_2 --export html
 python -m wechat_article_reader web
+# Windows 也可：双击 run_web.pyw（无控制台）或 run_web.cmd（有控制台）
 python -m wechat_article_reader mcp-server
 python -m wechat_article_reader mcp-server --transport http
 
@@ -120,11 +121,17 @@ python -m wechat_article_reader db current
 
 ## Web
 
+三种启动方式都落到同一套 FastAPI 应用，监听 `http://127.0.0.1:8000`：
+
+| 怎么开 | 说明 |
+| --- | --- |
+| `python -m wechat_article_reader web` | CLI；控制台打印 URL |
+| `run_web.pyw` | Windows 双击；无控制台，就绪后打开浏览器；失败写仓库根目录 `error.log` |
+| `run_web.cmd` | Windows 双击；用 `.venv\Scripts\python.exe`，有控制台 |
+
 ```powershell
 python -m wechat_article_reader web
 ```
-
-Windows 也可双击 `run_web.pyw`（无控制台，就绪后打开浏览器）或 `run_web.cmd`（有控制台）。都监听 `http://127.0.0.1:8000`。失败时 `run_web.pyw` 写仓库根目录 `error.log`。
 
 页面：首页状态、单篇抓取/摘要/下载、批量导出、历史（缓存列表）。HTTP JSON 与页面共用 `ArticleWorkflowService` / `ArticleReadingService`。
 
@@ -184,6 +191,6 @@ python -m wechat_article_reader check
 | --- | --- |
 | [架构设计](docs/架构设计.md) | 分层、端口、缓存、阅读投影、安全 |
 | [模块说明](docs/模块说明.md) | 目录与职责 |
-| [diagrams](docs/diagrams/) | 分层与数据流示意 |
+| [diagrams](docs/diagrams/) | Archify 交互图（JSON 规格 + 交付 HTML） |
 
 License：MIT。

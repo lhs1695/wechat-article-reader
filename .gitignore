@@ -156,6 +156,10 @@ wechat-article-summarizer/
 .warp/skills_backup_before_overwrite_20260328/
 .tmp_skillhub_sync/
 
+# Archify visual-check sidecars and delivery scratch (do not publish)
+docs/diagrams/*.visual-check.*
+docs/diagrams/.archify-delivery-*/
+
 # Local caches / large generated artifacts
 .runtime/
 .chromadb/

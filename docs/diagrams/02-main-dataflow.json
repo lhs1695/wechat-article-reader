@@ -2,29 +2,29 @@
   "schema_version": 1,
   "diagram_type": "dataflow",
   "meta": {
-    "title": "主链路：抓取、缓存、阅读投影、可选摘要",
+    "title": "主链路：抓取、缓存、Markdown 投影、可选摘要",
     "locale": "zh-CN",
     "output": "02-main-dataflow.html",
     "quality_profile": "showcase",
-    "viewBox": [1080, 720],
+    "viewBox": [1280, 720],
     "views": [
       {
-        "id": "hot-path",
+        "id": "hotPath",
         "label": "热路径",
-        "focus": ["wechat", "scraper", "fetch", "sqlite", "projector", "markdown"],
-        "note": "URL 进库后，阅读 Markdown 从缓存 HTML 现算，不落分页结果。"
+        "focus": ["srcUrl", "scrapeWx", "useFetch", "tblArticle", "projRead", "outMd"],
+        "note": "URL 进库后，阅读 Markdown 从缓存 HTML 现算；导出默认无图。"
       },
       {
-        "id": "cache-keys",
+        "id": "cacheKeys",
         "label": "缓存键",
-        "focus": ["fetch", "sqlite", "summaries"],
+        "focus": ["useFetch", "tblArticle", "tblSum"],
         "note": "文章命中比 URL；摘要是否过期比正文 content_hash。"
       },
       {
-        "id": "optional-out",
+        "id": "optionalOut",
         "label": "可选产出",
-        "focus": ["projector", "deepseek", "summaries", "markdown"],
-        "note": "摘要走同一投影的 SummarySourceRenderer；导出复用同一套 Markdown/HTML 渲染。"
+        "focus": ["projRead", "llmDs", "tblSum", "outMd"],
+        "note": "摘要走同一投影的 SummarySourceRenderer；不是必经之路。"
       }
     ]
   },
@@ -36,45 +36,39 @@
     { "label": "产出" }
   ],
   "nodes": [
-    { "id": "wechat", "type": "external", "label": "公众号 URL", "sublabel": "mp.weixin.qq.com", "stage": 0, "row": 1, "tag": "唯一来源" },
-    { "id": "scraper", "type": "security", "label": "WechatHttpxScraper", "sublabel": "SSRF / 清洗", "stage": 1, "row": 0, "tag": "HTML" },
-    { "id": "fetch", "type": "backend", "label": "FetchArticleUseCase", "sublabel": "URL 缓存命中", "stage": 1, "row": 2 },
-    { "id": "sqlite", "type": "database", "label": "articles", "sublabel": "HTML + content_hash", "stage": 2, "row": 1, "tag": "SQLite" },
-    { "id": "summaries", "type": "database", "label": "summaries", "sublabel": "article_id + hash", "stage": 2, "row": 3 },
-    { "id": "projector", "type": "backend", "label": "阅读投影", "sublabel": "HTML → blocks", "stage": 3, "row": 1, "tag": "不落库" },
-    { "id": "markdown", "type": "frontend", "label": "阅读 / 导出", "sublabel": "Markdown / HTML", "stage": 4, "row": 0 },
-    { "id": "deepseek", "type": "cloud", "label": "DeepSeek", "sublabel": "四字段 JSON", "stage": 4, "row": 2 }
+    { "id": "srcUrl", "type": "external", "label": "公众号 URL", "stage": 0, "row": 1, "tag": "仅微信" },
+    { "id": "scrapeWx", "type": "security", "label": "WechatHttpxScraper", "stage": 1, "row": 0, "tag": "SSRF" },
+    { "id": "useFetch", "type": "backend", "label": "FetchArticleUseCase", "stage": 1, "row": 2 },
+    { "id": "tblArticle", "type": "database", "label": "articles", "stage": 2, "row": 1, "tag": "SQLite" },
+    { "id": "tblSum", "type": "database", "label": "summaries", "stage": 2, "row": 3 },
+    { "id": "projRead", "type": "backend", "label": "阅读投影", "stage": 3, "row": 1, "tag": "不落库" },
+    { "id": "outMd", "type": "frontend", "label": "阅读 / 导出", "stage": 4, "row": 0, "tag": "MD 无图" },
+    { "id": "llmDs", "type": "cloud", "label": "DeepSeek", "stage": 4, "row": 2, "tag": "四字段" }
   ],
   "flows": [
-    { "id": "html-in", "from": "wechat", "to": "scraper", "label": "公众号 HTML", "classification": "untrusted_web_content", "variant": "security" },
-    { "id": "scrape-fetch", "from": "scraper", "to": "fetch", "label": "清洗后文章", "classification": "Article", "variant": "emphasis" },
-    { "id": "persist", "from": "fetch", "to": "sqlite", "label": "save / get_by_url", "classification": "articles 行", "variant": "emphasis" },
-    { "id": "project", "from": "sqlite", "to": "projector", "label": "content_html", "classification": "读时现算", "variant": "emphasis" },
-    { "id": "read-page", "from": "projector", "to": "markdown", "label": "Markdown 投影", "classification": "对外契约", "variant": "emphasis" },
-    { "id": "summary-src", "from": "projector", "to": "deepseek", "label": "摘要源 Markdown", "classification": "模型输入", "variant": "dashed" },
-    { "id": "summary-out", "from": "deepseek", "to": "summaries", "label": "四字段 JSON", "classification": "绑定 content_hash", "variant": "dashed" }
+    { "id": "htmlIn", "from": "srcUrl", "to": "scrapeWx", "label": "公众号 HTML", "classification": "untrusted_web_content", "variant": "security" },
+    { "id": "scrapeFetch", "from": "scrapeWx", "to": "useFetch", "label": "清洗后文章", "classification": "Article", "variant": "emphasis" },
+    { "id": "persistRow", "from": "useFetch", "to": "tblArticle", "label": "save / get_by_url", "classification": "articles 行", "variant": "emphasis" },
+    { "id": "projectHtml", "from": "tblArticle", "to": "projRead", "label": "content_html", "classification": "读时现算", "variant": "emphasis" },
+    { "id": "emitMd", "from": "projRead", "to": "outMd", "label": "Markdown 投影", "classification": "对外契约", "variant": "emphasis" },
+    { "id": "sumSrc", "from": "projRead", "to": "llmDs", "label": "摘要源 Markdown", "classification": "模型输入", "variant": "dashed" },
+    { "id": "sumOut", "from": "llmDs", "to": "tblSum", "label": "四字段 JSON", "classification": "绑定 content_hash", "variant": "dashed" }
   ],
   "cards": [
     {
       "dot": "emerald",
       "title": "一条主链路",
-      "items": [
-        "抓取 → SQLite → 读时投影 Markdown；导出默认无图，分页结果不落库"
-      ]
+      "items": ["抓取 → SQLite → 读时投影 Markdown；导出默认无图，分页不落库"]
     },
     {
       "dot": "cyan",
       "title": "两种命中",
-      "items": [
-        "文章比 URL；摘要是否过期比 content_hash"
-      ]
+      "items": ["文章比 URL；摘要是否过期比 content_hash"]
     },
     {
       "dot": "orange",
       "title": "摘要是旁路",
-      "items": [
-        "DeepSeek 输入与阅读页同源投影，但不是必经之路"
-      ]
+      "items": ["DeepSeek 输入与阅读页同源投影，但不是必经之路"]
     }
   ]
 }
