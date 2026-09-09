@@ -89,6 +89,8 @@ class SummarizeArticleUseCase:
 
         except OperationCancelledError:
             raise
-        except Exception as e:
-            logger.error(f"摘要生成失败: {e}")
-            raise UseCaseError(f"摘要生成失败: {e}") from e
+        except (SummarizerNotAvailableError, SummarizerTokenLimitError):
+            raise
+        except Exception as exc:
+            logger.error("摘要生成失败 error_type={}", type(exc).__name__)
+            raise UseCaseError("摘要生成失败") from exc

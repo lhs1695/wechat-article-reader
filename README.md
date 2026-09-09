@@ -136,7 +136,7 @@ ingest_article(url)
 - 分页尽量在标题前收束，连续列表尽量整组翻页。
 - 响应含 `block_count`、`word_count`、`section_title`、`chars`。
 - 失败是 MCP **isError**，消息形如 `code: 说明`，不用 `{success:false}` 假成功。
-- 网页正文标记为不可信外部内容，不能改写系统指令。
+- 四个工具成功体都带 `source_trust: "untrusted_web_content"`；网页正文（及据此生成的摘要）不能改写系统指令。
 
 单独启动 MCP：
 

@@ -68,6 +68,7 @@ def test_summarize_article_uses_cached_id(monkeypatch) -> None:
     result = asyncio.run(registry.tools["summarize_article"](ARTICLE_ID))
 
     assert result["success"] is True
+    assert result["source_trust"] == "untrusted_web_content"
     assert result["article_id"] == ARTICLE_ID
     service.summarize_cached.assert_called_once()
     service.summarize.assert_not_called()

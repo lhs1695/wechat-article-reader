@@ -56,8 +56,8 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 toc_level=MCPInputValidator.validate_toc_level(toc_level),
             )
             return {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()}
-        except Exception as extra:
-            raise_mcp_error(extra, fallback=("article_read_failed", "读取文章失败"))
+        except Exception as exc:
+            raise_mcp_error(exc, fallback=("article_read_failed", "读取文章失败"))
 
     @mcp_instance.tool()
     @secure_tool
@@ -93,5 +93,5 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 section=MCPInputValidator.validate_optional_section(section),
             )
             return {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()}
-        except Exception as extra:
-            raise_mcp_error(extra, fallback=("article_read_failed", "读取文章失败"))
+        except Exception as exc:
+            raise_mcp_error(exc, fallback=("article_read_failed", "读取文章失败"))

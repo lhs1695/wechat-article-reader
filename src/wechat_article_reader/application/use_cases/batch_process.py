@@ -59,8 +59,8 @@ class BatchProcessUseCase:
                     try:
                         summary = self._summarize.execute(article)
                         article.attach_summary(summary)
-                    except Exception as e:
-                        logger.warning(f"摘要生成失败: {e}")
+                    except Exception as exc:
+                        logger.warning("摘要生成失败 error_type={}", type(exc).__name__)
 
                 progress.mark_success(url)
 

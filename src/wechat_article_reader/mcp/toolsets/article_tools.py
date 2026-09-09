@@ -38,6 +38,7 @@ def register_article_tools(mcp_instance: FastMCP) -> None:
             )
             return {
                 "success": True,
+                "source_trust": "untrusted_web_content",
                 "article_id": article_id,
                 "title": payload.article.title,
                 "author": payload.article.author,

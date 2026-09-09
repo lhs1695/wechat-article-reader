@@ -83,7 +83,7 @@ class DeepSeekSummarizer(BaseSummarizer):
         except SummarizerError:
             raise
         except Exception as exc:
-            raise SummarizerAPIError(f"DeepSeek API调用失败: {exc}") from exc
+            raise SummarizerAPIError("DeepSeek API调用失败") from exc
         if cancel_event is not None and cancel_event.is_set():
             raise OperationCancelledError()
         return self._parse_response(response_text, max_length)

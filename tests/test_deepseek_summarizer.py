@@ -11,6 +11,7 @@ from wechat_article_reader.shared.exceptions import (
     SummarizerError,
     SummarizerNotAvailableError,
     SummarizerTokenLimitError,
+    UseCaseError,
 )
 
 
@@ -93,3 +94,42 @@ def test_summary_rejects_overlong_article_without_calling_model(sample_article) 
     use_case = SummarizeArticleUseCase(summarizer, max_input_chars=1_000)
     with pytest.raises(SummarizerTokenLimitError, match="文章过长"):
         use_case.execute(article)
+
+
+def test_summary_failure_logs_error_type_not_model_body(
+    sample_article, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "SECRET_MODEL_BODY_SHOULD_NOT_APPEAR"
+    captured: list[str] = []
+
+    def _capture(message: object, *args: object, **kwargs: object) -> None:
+        captured.append(str(message))
+        captured.extend(str(item) for item in args)
+        captured.extend(str(value) for value in kwargs.values())
+
+    monkeypatch.setattr(
+        "wechat_article_reader.application.use_cases.summarize_article.logger.error",
+        _capture,
+    )
+    monkeypatch.setattr(
+        "wechat_article_reader.application.use_cases.summarize_article.logger.warning",
+        _capture,
+    )
+
+    class _Fail:
+        def is_available(self) -> bool:
+            return True
+
+        def summarize(self, **_: object):
+            raise RuntimeError(secret)
+
+    with pytest.raises(UseCaseError) as err:
+        SummarizeArticleUseCase(_Fail()).execute(sample_article)
+
+    joined = " ".join(captured)
+    message = str(err.value)
+    assert secret not in message
+    assert "摘要生成失败" in message
+    assert secret not in joined
+    assert "error_type={}" in joined
+    assert "RuntimeError" in joined
