@@ -92,7 +92,7 @@ def fetch_article(
 def read_article_markdown(
     url: str = Query(..., min_length=1, max_length=2048),
     cursor: int = Query(0, ge=0),
-    max_chars: int = Query(8_000, ge=1_000, le=20_000),
+    max_chars: int = Query(20_000, ge=1_000, le=20_000),
     container: ContainerDependency = None,  # type: ignore[assignment]
 ) -> dict[str, object]:
     """Return the same paginated Markdown projection used by the MCP reader."""

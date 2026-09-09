@@ -80,7 +80,9 @@ class HtmlExporter(BaseExporter):
         """先生成 Markdown，再渲染为 HTML"""
         # 委托 MarkdownExporter 生成标准 MD 内容
         md_exporter = MarkdownExporter(output_dir=str(self._output_dir))
-        md_content = md_exporter._generate_markdown(article, **options)
+        html_options = dict(options)
+        html_options.setdefault("include_images", True)
+        md_content = md_exporter._generate_markdown(article, **html_options)
 
         # 去除 YAML frontmatter（markdown_it 不识别 frontmatter）
         md_body = self._strip_frontmatter(md_content)

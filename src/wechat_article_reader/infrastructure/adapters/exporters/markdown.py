@@ -90,6 +90,7 @@ class MarkdownExporter(BaseExporter):
         include_summary = options.get("include_summary", True)
         include_body = options.get("include_body", True)
         include_frontmatter = options.get("include_frontmatter", True)
+        include_images = options.get("include_images", False)
 
         parts = []
 
@@ -120,19 +121,6 @@ class MarkdownExporter(BaseExporter):
         # 标题
         parts.append(f"# {article.title}\n")
 
-        # 元信息
-        meta_items = []
-        if article.account_name:
-            meta_items.append(f"**公众号**: {article.account_name}")
-        if article.author:
-            meta_items.append(f"**作者**: {article.author}")
-        if article.publish_time:
-            meta_items.append(f"**发布时间**: {article.publish_time_str}")
-        meta_items.append(f"**字数**: {article.word_count}")
-
-        parts.append(" | ".join(meta_items))
-        parts.append("")
-
         # 摘要部分
         if include_summary and article.summary:
             parts.append("---")
@@ -150,13 +138,11 @@ class MarkdownExporter(BaseExporter):
                 parts.extend(["", "### 标签", ", ".join(article.summary.tags)])
             parts.append("")
 
-        # 正文内容
-        # 正文内容
         if include_body:
-            parts.append("## 原文内容")
-            parts.append("")
             projection = ArticleReadingProjector().project(article)
-            parts.append(MarkdownReadingRenderer().render(projection))
+            parts.append(
+                MarkdownReadingRenderer().render(projection, include_images=include_images)
+            )
 
         parts.append("")
         parts.append("---")

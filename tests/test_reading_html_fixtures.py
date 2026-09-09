@@ -13,6 +13,7 @@ from wechat_article_reader.features.article_reading import (
 from wechat_article_reader.infrastructure.adapters.exporters.markdown import MarkdownExporter
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "html" / "wechat_dirty_dom.html"
+_FOOTER_FIXTURE = Path(__file__).parent / "fixtures" / "html" / "wechat_account_footer.html"
 _TABLE_LINK = "[单元格链接](<https://example.com/table-note>)"
 _CODE_SNIPPET = 'return "wechat-dirty-dom"'
 _RECOMMEND_ALPHA = "[相关文甲](<https://mp.weixin.qq.com/s/anon-alpha>)"
@@ -107,7 +108,9 @@ def test_dirty_dom_fixture_uses_same_renderer_for_export_and_read_page(
     tmp_path: Path,
 ) -> None:
     article = _article_from_fixture()
-    body = MarkdownReadingRenderer().render(ArticleReadingProjector().project(article))
+    body = MarkdownReadingRenderer().render(
+        ArticleReadingProjector().project(article), include_images=False
+    )
     exported_path = Path(MarkdownExporter(output_dir=str(tmp_path)).export(article))
     exported = exported_path.read_text(encoding="utf-8")
     page = ArticleReadingService(_Workflow(article), _Storage(article)).read(
@@ -115,7 +118,36 @@ def test_dirty_dom_fixture_uses_same_renderer_for_export_and_read_page(
     )
 
     assert body in exported
+    assert "## 原文内容" not in exported
+    assert "![" not in exported
     assert _TABLE_LINK in page.content_markdown
     assert _CODE_SNIPPET in page.content_markdown
     assert _RECOMMEND_ALPHA in page.content_markdown
     assert page.content_markdown.count(_TABLE_LINK) == body.count(_TABLE_LINK)
+
+
+def test_account_footer_wall_is_dropped_in_article_extend_links_stay() -> None:
+    dirty = _article_from_fixture()
+    footer_html = _FOOTER_FIXTURE.read_text(encoding="utf-8")
+    footer_article = Article(
+        url=ArticleURL.from_string("https://mp.weixin.qq.com/s/anon-footer-wall"),
+        title="匿名推荐墙样例",
+        content=ArticleContent.from_html(footer_html),
+    )
+    dirty_markdown = MarkdownReadingRenderer().render(
+        ArticleReadingProjector().project(dirty)
+    )
+    footer_markdown = MarkdownReadingRenderer().render(
+        ArticleReadingProjector().project(footer_article)
+    )
+    footer_page = ArticleReadingService(_Workflow(footer_article), _Storage(footer_article)).read(
+        footer_article.id, max_chars=20_000
+    )
+
+    assert _RECOMMEND_ALPHA in dirty_markdown
+    assert "这是正文结论，应当保留。" in footer_markdown
+    assert "今日好文推荐" not in footer_markdown
+    assert "推荐文甲" not in footer_markdown
+    assert "活动推销" not in footer_markdown
+    assert "今日好文推荐" not in footer_page.content_markdown
+    assert "这是正文结论，应当保留。" in footer_page.content_markdown

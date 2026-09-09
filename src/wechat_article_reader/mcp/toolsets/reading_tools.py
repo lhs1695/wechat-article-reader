@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 
 def register_reading_tools(mcp_instance: FastMCP) -> None:
+    from ...features.article_reading.service import DEFAULT_READ_MAX_CHARS
     from ...infrastructure.config import get_container
 
     def service():
@@ -26,8 +27,9 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
 
         这是唯一会抓取微信公众号并写 SQLite 的工具。refresh=true 时强制重新抓取。
         默认 toc_level=2（H2）。若文章没有这么浅的标题（例如正文全是 H3），目录自动对齐到最浅一层。
-        需要更细的纲时再提高 toc_level。先按 sections 标题或 start_cursor 用 read_article 跳读；
-        只有需要连续上下文时才跟随 next_cursor。通读长文优先 summarize_article。
+        需要更细的纲时再提高 toc_level。篇幅不超过 read_article 的 max_chars 时一次读完。
+        更长的文章按 sections 标题或 start_cursor 跳读（传 section 只返回该节）；
+        只有节内仍超长才跟随 next_cursor。通读长文优先 summarize_article。
         """
         try:
             if not isinstance(refresh, bool):
@@ -64,14 +66,16 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
     async def read_article(
         article_id: str,
         cursor: int = 0,
-        max_chars: int = 8_000,
+        max_chars: int = DEFAULT_READ_MAX_CHARS,
         include_images: bool = False,
         section: str | None = None,
     ) -> dict[str, Any]:
         """读取一页缓存 Markdown。只读本地，不联网。
 
-        优先传 section（章节标题：精确匹配，或至少两字的唯一前缀）；与 cursor 同时出现时以 section 为准。
-        需要续读时把上次响应的 next_cursor 原样传入。单个块超过当前 max_chars 但不超过
+        优先传 section（章节标题：精确匹配，或至少两字的唯一前缀）；只返回该节。
+        与 cursor 同时出现时在该节内续读，cursor 不在节内则从节首开始。
+        不传 section 时，全文不超过 max_chars 则一次返回。需要续读时把上次响应的
+        next_cursor 原样传入。单个块超过当前 max_chars 但不超过
         20000 时会整块返回；超过 20000 才返回 page_too_large。
         include_images=false（默认）排除图片语法、保留说明。
         """

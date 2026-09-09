@@ -383,6 +383,76 @@ def test_leading_copy_before_h3_is_preamble_not_whole_article() -> None:
     assert result.sections[1].end_cursor == result.block_count
 
 
+def test_first_page_section_title_stays_preamble_until_heading() -> None:
+    article = _article("<p>开场</p><h3>一、背景</h3><p>甲</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    page = service.read(article.id, max_chars=1_000)
+
+    assert page.section_title == "正文"
+    assert page.section_end_cursor == 1
+    assert "一、背景" in page.content_markdown
+    assert page.to_dict()["section_end_cursor"] == 1
+
+
+def test_headingless_continuation_does_not_inject_synthetic_title() -> None:
+    para = "段" * 800
+    article = _article(f"<p>{para}</p><p>{para}</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    first = service.read(article.id, max_chars=1_000)
+    second = service.read(article.id, cursor=first.next_cursor or 0, max_chars=1_000)
+
+    assert first.has_more is True
+    assert first.section_title == "正文"
+    assert second.section_title == "正文"
+    assert not second.content_markdown.startswith("# 正文")
+    assert second.section_end_cursor == first.block_count
+
+
+def test_section_seek_stops_at_section_end() -> None:
+    article = _article("<h2>甲节</h2><p>短</p><h2>乙节</h2><p>后面还有</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    page = service.read(article.id, section="甲节", max_chars=1_000)
+
+    assert page.section_title == "甲节"
+    assert page.section_end_cursor == 2
+    assert page.has_more is False
+    assert page.next_cursor is None
+    assert "短" in page.content_markdown
+    assert "后面还有" not in page.content_markdown
+
+
+def test_section_and_cursor_continue_inside_section_only() -> None:
+    para = "段" * 800
+    article = _article(f"<h2>甲节</h2><p>{para}</p><p>{para}</p><h2>乙节</h2><p>后面还有</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    first = service.read(article.id, section="甲节", max_chars=1_000)
+    second = service.read(
+        article.id, section="甲节", cursor=first.next_cursor or 0, max_chars=1_000
+    )
+
+    assert first.has_more is True
+    assert "后面还有" not in first.content_markdown
+    assert "后面还有" not in second.content_markdown
+    assert second.section_title == "甲节"
+
+
+def test_page_word_count_follows_projected_body_not_article() -> None:
+    para = "段" * 800
+    article = _article(f"<p>{para}</p><p>{para}</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+
+    page = service.read(article.id, max_chars=1_000)
+
+    assert page.has_more is True
+    assert page.word_count == page.chars or page.word_count < page.chars
+    assert page.word_count < article.word_count
+    assert page.chars == len(page.content_markdown)
+
+
 def test_read_fills_page_across_headings_instead_of_rewinding_to_last_h3() -> None:
     para = "段" * 400
     article = _article(f"<h3>一</h3><p>{para}</p><h3>二</h3><p>{para}</p><h3>三</h3><p>{para}</p>")

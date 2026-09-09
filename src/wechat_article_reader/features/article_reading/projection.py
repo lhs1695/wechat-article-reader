@@ -23,6 +23,7 @@ _ATOMIC_TAG_TYPES = {
 _CONTAINER_TAGS = {"article", "div", "main", "section"}
 _TEXT_BLOCK_TYPES = {"heading", "paragraph", "list_item", "quote", "code", "table"}
 _MAX_BLOCK_CHARS = 900
+_ACCOUNT_FOOTER_MARKERS = frozenset({"今日好文推荐", "猜你喜欢"})
 
 
 def content_digest(content_html: str, fallback_text: str = "") -> str:
@@ -206,6 +207,7 @@ class ArticleReadingProjector:
             soup = BeautifulSoup(article.content_html, "html.parser")
             root = soup.body or soup
             self._walk(root, drafts)
+            drafts = self._drop_trailing_account_footer(drafts)
         if not drafts:
             for paragraph in re.split(r"\n\s*\n|\n", article.content_text):
                 self._append_text(drafts, "paragraph", paragraph)
@@ -373,6 +375,20 @@ class ArticleReadingProjector:
                 else None,
             }
         )
+
+    @staticmethod
+    def _drop_trailing_account_footer(drafts: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Drop account recommend-walls after an explicit footer marker.
+
+        In-article lists under a real heading (for example 延伸阅读) stay.
+        """
+        cut: int | None = None
+        for index, draft in enumerate(drafts):
+            if _clean_text(str(draft.get("text") or "")) in _ACCOUNT_FOOTER_MARKERS:
+                cut = index
+        if cut is None:
+            return drafts
+        return drafts[:cut]
 
     @staticmethod
     def _sections(blocks: tuple[ReadingBlock, ...]) -> tuple[ReadingSection, ...]:

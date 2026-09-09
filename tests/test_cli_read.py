@@ -71,7 +71,7 @@ def test_read_uuid_json_is_machine_readable() -> None:
     service.read.assert_called_once_with(
         "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
         cursor=0,
-        max_chars=8_000,
+        max_chars=20_000,
         section="结语",
     )
 

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ..article_workflow import ArticleWorkflowService
 
 DEFAULT_TOC_LEVEL = 2
+DEFAULT_READ_MAX_CHARS = 20_000
 _HEADING_BREAK_MAX_LEVEL = 3
 _MIN_SECTION_PREFIX = 2
 
@@ -107,7 +108,7 @@ class ArticleReadingService:
         article_id: str | UUID,
         *,
         cursor: int = 0,
-        max_chars: int = 8_000,
+        max_chars: int = DEFAULT_READ_MAX_CHARS,
         include_images: bool = True,
         section: str | None = None,
     ) -> ArticleReadPage:
@@ -119,8 +120,12 @@ class ArticleReadingService:
             raise ValueError("include_images must be a boolean")
         article = self._get_article(article_id)
         projection = self._projector.project(article)
+        window_end = len(projection.blocks)
         if section is not None:
-            cursor = resolve_section_cursor(projection.sections, section)
+            matched = resolve_section(projection.sections, section)
+            if cursor < matched.start_cursor or cursor >= matched.end_cursor:
+                cursor = matched.start_cursor
+            window_end = matched.end_cursor
         if cursor > len(projection.blocks):
             raise ValueError("cursor exceeds article block count")
 
@@ -129,9 +134,11 @@ class ArticleReadingService:
             cursor=cursor,
             max_chars=max_chars,
             include_images=include_images,
+            stop_before=window_end,
         )
-        has_more = next_cursor < len(projection.blocks)
-        section_title = _page_section_title(projection.sections, selected, cursor)
+        has_more = next_cursor < window_end
+        covering = _covering_section(projection.sections, cursor)
+        section_title = _page_section_title(covering, selected)
         body = self._renderer.render(selected, include_images=include_images)
         preamble = _page_preamble(article, cursor, selected, section_title, projection.sections)
         content = f"{preamble}\n\n{body}".strip() if preamble else body
@@ -142,9 +149,10 @@ class ArticleReadingService:
             has_more=has_more,
             content_markdown=content,
             block_count=len(projection.blocks),
-            word_count=article.word_count,
+            word_count=len(body),
             section_title=section_title,
             chars=len(content),
+            section_end_cursor=covering.end_cursor if covering is not None else None,
         )
 
     def _select_page_blocks(
@@ -154,12 +162,13 @@ class ArticleReadingService:
         cursor: int,
         max_chars: int,
         include_images: bool,
+        stop_before: int,
     ) -> tuple[list[ReadingBlock], int]:
         selected: list[ReadingBlock] = []
         rendered_length = 0
         next_cursor = cursor
         index = cursor
-        total = len(blocks)
+        total = min(len(blocks), stop_before)
 
         def rendered(block: ReadingBlock) -> str:
             return self._renderer.render_block(block, include_images=include_images)
@@ -266,43 +275,50 @@ def _sections_for_toc(
     return tuple(filtered)
 
 
-def resolve_section_cursor(sections: tuple[ReadingSection, ...], section: str) -> int:
+def resolve_section(sections: tuple[ReadingSection, ...], section: str) -> ReadingSection:
     needle = section.strip()
     if not needle:
         raise ValueError("section must be a non-empty string")
     exact = [item for item in sections if item.title == needle]
     if len(exact) == 1:
-        return exact[0].start_cursor
+        return exact[0]
     if len(exact) > 1:
         raise ValueError(f"section {needle!r} is ambiguous")
     if len(needle) < _MIN_SECTION_PREFIX:
         raise ValueError(f"section not found: {needle}")
     prefixes = [item for item in sections if item.title.startswith(needle)]
     if len(prefixes) == 1:
-        return prefixes[0].start_cursor
+        return prefixes[0]
     if len(prefixes) > 1:
         raise ValueError(f"section {needle!r} is ambiguous")
     raise ValueError(f"section not found: {needle}")
 
 
-def _page_section_title(
-    sections: tuple[ReadingSection, ...],
-    selected: list[ReadingBlock],
-    cursor: int,
-) -> str | None:
+def resolve_section_cursor(sections: tuple[ReadingSection, ...], section: str) -> int:
+    return resolve_section(sections, section).start_cursor
+
+
+def _covering_section(
+    sections: tuple[ReadingSection, ...], cursor: int
+) -> ReadingSection | None:
     covering = [item for item in sections if item.start_cursor <= cursor < item.end_cursor]
     if covering:
         covering.sort(key=lambda item: (item.start_cursor, item.level))
-        title = covering[-1].title
-        if title != "正文":
-            return title
+        return covering[-1]
+    if sections and cursor >= sections[-1].start_cursor:
+        return sections[-1]
+    return None
+
+
+def _page_section_title(
+    covering: ReadingSection | None,
+    selected: list[ReadingBlock],
+) -> str | None:
+    if covering is not None:
+        return covering.title
     for block in selected:
         if block.type == "heading" and block.text:
             return block.text
-    if covering:
-        return covering[-1].title
-    if sections and cursor >= sections[-1].start_cursor:
-        return sections[-1].title
     return None
 
 
@@ -325,7 +341,7 @@ def _page_preamble(
         if first_heading == title:
             return f"作者：{author}" if author else ""
         return f"# {title} · {author}" if author else f"# {title}"
-    if not section_title:
+    if not section_title or section_title == "正文":
         return ""
     first = selected[0] if selected else None
     if first is not None and first.type == "heading" and first.text == section_title:

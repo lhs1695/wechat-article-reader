@@ -56,7 +56,35 @@ def test_exporters_create_parent_for_explicit_file_path(tmp_path: Path) -> None:
     assert html_path.is_file()
 
 
-def test_default_export_names_do_not_overwrite_same_titles(tmp_path: Path) -> None:
+def test_markdown_export_defaults_to_no_images_and_no_body_wrapper(tmp_path: Path) -> None:
+    article = Article(
+        url=ArticleURL.from_string("https://mp.weixin.qq.com/s/xxx"),
+        title="导出样例",
+        content=ArticleContent(
+            html=(
+                "<p>正文段</p>"
+                "<figure><img src='https://mmbiz.qpic.cn/a.png' alt='图'>"
+                "<figcaption>示意图</figcaption></figure>"
+            ),
+            text="正文段",
+        ),
+    )
+
+    default_text = Path(MarkdownExporter(output_dir=str(tmp_path)).export(article)).read_text(
+        encoding="utf-8"
+    )
+    with_images = Path(
+        MarkdownExporter(output_dir=str(tmp_path)).export(
+            article, path=str(tmp_path / "with-images.md"), include_images=True
+        )
+    ).read_text(encoding="utf-8")
+
+    assert "## 原文内容" not in default_text
+    assert "**字数**" not in default_text
+    assert "正文段" in default_text
+    assert "mmbiz.qpic.cn" not in default_text
+    assert "示意图" in default_text
+    assert "mmbiz.qpic.cn" in with_images
     first = Article(
         url=ArticleURL.from_string("https://mp.weixin.qq.com/s/first"),
         title="同名文章",

@@ -104,6 +104,7 @@ class ArticleReadPage:
     word_count: int = 0
     section_title: str | None = None
     chars: int = 0
+    section_end_cursor: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,4 +117,5 @@ class ArticleReadPage:
             "word_count": self.word_count,
             "section_title": self.section_title,
             "chars": self.chars if self.chars else len(self.content_markdown),
+            "section_end_cursor": self.section_end_cursor,
         }

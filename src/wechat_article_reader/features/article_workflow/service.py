@@ -79,6 +79,7 @@ class ArticleWorkflowService:
         target: str | None = None,
         path: str | None = None,
         include_body: bool = True,
+        include_images: bool | None = None,
         summary_content: str = "",
         key_points: list[str] | tuple[str, ...] = (),
         tags: list[str] | tuple[str, ...] = (),
@@ -111,8 +112,11 @@ class ArticleWorkflowService:
         export_path = None
         if target is not None:
             assert self._export_use_case is not None
+            export_options: dict[str, bool] = {"include_body": include_body}
+            if include_images is not None:
+                export_options["include_images"] = include_images
             export_path = self._export_use_case.execute(
-                article, target=target, path=path, include_body=include_body
+                article, target=target, path=path, **export_options
             )
         return ArticleProcessPayload(
             article=self._to_metadata(article),
@@ -262,6 +266,7 @@ class ArticleWorkflowService:
         summary_content: str = "",
         key_points: list[str] | tuple[str, ...] = (),
         include_body: bool = True,
+        include_images: bool | None = None,
         path: str | None = None,
         tags: list[str] | tuple[str, ...] = (),
     ) -> ArticleExportPayload:
@@ -271,6 +276,7 @@ class ArticleWorkflowService:
             target=target,
             path=path,
             include_body=include_body,
+            include_images=include_images,
             summary_content=summary_content,
             key_points=key_points,
             tags=tags,

@@ -70,7 +70,7 @@ def test_read_article_defaults_to_markdown_without_blocks(monkeypatch) -> None:
     service.read.assert_called_once_with(
         "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
         cursor=0,
-        max_chars=8_000,
+        max_chars=20_000,
         include_images=False,
         section=None,
     )
@@ -95,7 +95,7 @@ def test_read_article_can_exclude_images(monkeypatch) -> None:
     service.read.assert_called_once_with(
         "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
         cursor=0,
-        max_chars=8_000,
+        max_chars=20_000,
         include_images=False,
         section=None,
     )
@@ -216,7 +216,7 @@ def test_read_article_passes_section(monkeypatch) -> None:
     service.read.assert_called_once_with(
         "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
         cursor=3,
-        max_chars=8_000,
+        max_chars=20_000,
         include_images=False,
         section="结语",
     )

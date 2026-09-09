@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.progress import Progress, ProgressColumn, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from ...features.article_reading.service import DEFAULT_READ_MAX_CHARS
 from ...infrastructure.config import get_container, get_settings
 from ...shared.constants import DEFAULT_MCP_HTTP_PORT, VERSION
 from ...shared.utils import setup_logger
@@ -73,6 +74,7 @@ def _process_single(
     no_summary: bool = False,
     export: str | None = None,
     output: str | None = None,
+    include_images: bool | None = None,
 ) -> None:
     """抓取并处理单篇文章（CLI/别名命令复用）"""
     container = get_container()
@@ -85,6 +87,7 @@ def _process_single(
                 summarize=not no_summary,
                 target=export,
                 path=output,
+                include_images=include_images,
                 continue_on_summary_error=True,
             )
         except Exception as e:
@@ -162,7 +165,14 @@ def db_downgrade(revision: str) -> None:
     help="导出格式",
 )
 @click.option("--output", "-o", type=click.Path(), help="输出文件路径")
-def fetch(url: str, no_summary: bool, export: str | None, output: str | None):
+@click.option(
+    "--images",
+    is_flag=True,
+    help="Markdown 导出时保留图片语法（默认与 MCP 阅读一致，不含图）",
+)
+def fetch(
+    url: str, no_summary: bool, export: str | None, output: str | None, images: bool
+):
     """
     抓取并处理单篇文章
 
@@ -170,20 +180,26 @@ def fetch(url: str, no_summary: bool, export: str | None, output: str | None):
         wechat-article-reader fetch https://mp.weixin.qq.com/s/xxx
         wechat-article-reader fetch URL -e markdown -o output.md
     """
-    _process_single(url, no_summary=no_summary, export=export, output=output)
+    _process_single(
+        url,
+        no_summary=no_summary,
+        export=export,
+        output=output,
+        include_images=True if images else None,
+    )
 
 
 @cli.command(name="read")
 @click.argument("source")
 @click.option("--refresh", is_flag=True, help="URL 输入时重新抓取并更新缓存")
 @click.option("--cursor", type=click.IntRange(min=0), default=0, show_default=True)
-@click.option("--section", default=None, help="按章节标题跳读；与 --cursor 同时出现时以本节为准")
+@click.option("--section", default=None, help="按章节标题读取该节；节过长再分页。与 --cursor 同时出现时在该节内续读")
 @click.option(
     "--max-chars",
     type=click.IntRange(min=1_000, max=20_000),
-    default=8_000,
+    default=DEFAULT_READ_MAX_CHARS,
     show_default=True,
-    help="单页 Markdown 最大字符数",
+    help="单页 Markdown 最大字符数；不传 section 且全文不超过此值则一次读完",
 )
 @click.option(
     "--output-format",
