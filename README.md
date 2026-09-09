@@ -1,8 +1,8 @@
-# 微信文章阅读与摘要服务
+# 微信文章阅读服务
 
-个人开源小工具：把一篇微信公众号文章抓下来，缓存到 SQLite，再以**分页 Markdown**给人或者 Agent 阅读；需要时再调用一次 DeepSeek 摘要，并支持导出 HTML / Markdown。
+个人开源小工具：一篇微信公众号文章 → SQLite → **分页 Markdown**。摘要可选；没有 API Key 仍可抓取、阅读和导出正文。
 
-它不是知识库、内部 Agent 平台，也不会替你自动读完整个公众号。摘要是可选的；没有 API Key 时仍可抓取、阅读和导出正文。
+它不是知识库、内部 Agent 平台，也不会替你扫完整个公众号。
 
 ```text
 微信公众号 URL
@@ -13,17 +13,26 @@
          ↘ CLI / Web / MCP 三个入口共用同一套服务
 ```
 
-## 它解决什么问题
+## 人怎么用，Agent 怎么用
 
-本地 Agent（例如 Cursor）往往不能稳定打开微信公众号页面：反爬、登录墙、HTML 噪声、长文塞爆上下文。若让模型自己用浏览器抓，副作用不清晰，也难复现。
+本地 Agent 往往打不开公众号页（反爬、登录墙、HTML 噪声、长文塞爆上下文）。本项目把阅读收成一条可控管道。
 
-本项目把这件事收成一条可控管道：
+**人**用 CLI / Web 可贴一条 URL，一次完成抓取、阅读、可选摘要和导出。
 
-| 谁 | 怎么用 |
+**Agent 只用四个 MCP 工具**，且必须按副作用拆开：只有 `ingest_article` 联网写库；读缓存和打模型不能混在同一次调用里。
+
+| 谁 | 入口 |
 | --- | --- |
-| 人 | CLI / Web 输入 URL，看正文、摘要、导出文件 |
-| 能读工作区的本地 Agent | `fetch --no-summary --export markdown`，直接读 `.md` |
-| 不能读本地文件的外部 Agent | MCP：`ingest_article` 写缓存，再 `read_article` / `summarize_article` |
+| 人 | CLI / Web |
+| 能读工作区的本地 Agent | 也可 `fetch --no-summary --export markdown`，直接读 `.md` |
+| 不能读本地文件的 Agent | 只用下表四个工具 |
+
+| 工具 | 副作用 | 作用 |
+| --- | --- | --- |
+| `ingest_article(url, refresh=false, toc_level=2)` | 联网 + 写 SQLite | 唯一抓公众号入口；默认 H2，无 H2 时对齐到最浅标题 |
+| `get_cached_article(article_id, toc_level=2)` | 无 | 再读元数据；ingest 已带目录时可跳过 |
+| `read_article(article_id, cursor=0, max_chars=8000, include_images=false, section=null)` | 无 | 一页 Markdown；`section`（精确或至少两字唯一前缀）优先于 `cursor` |
+| `summarize_article(article_id, max_length=500)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
 ## 明确不做
 
@@ -110,7 +119,7 @@ FastAPI + 模板页：粘贴 URL 抓取、阅读、摘要、导出。HTTP JSON �
 
 ## MCP
 
-给**不能读本地导出文件**的 Agent 用。传输：本地 Cursor 默认 **stdio**；也支持本机 **Streamable HTTP**。
+给**不能读本地导出文件**的 Agent 用。四个工具及副作用见上文。传输：本地 Cursor 默认 **stdio**；也支持本机 **Streamable HTTP**。
 
 ```text
 ingest_article(url)
@@ -119,13 +128,6 @@ ingest_article(url)
     → 需要连续上下文时跟随 next_cursor
     → 需要通读概览时 summarize_article(article_id)
 ```
-
-| 工具 | 副作用 | 作用 |
-| --- | --- | --- |
-| `ingest_article(url, refresh=false, toc_level=2)` | 联网 + 写 SQLite | 唯一抓公众号入口；默认 H2，无 H2 时对齐到最浅标题 |
-| `get_cached_article(article_id, toc_level=2)` | 无 | 再读元数据；ingest 已带目录时可跳过 |
-| `read_article(article_id, cursor=0, max_chars=8000, include_images=false, section=null)` | 无 | 一页 Markdown；`section`（精确或至少两字唯一前缀）优先于 `cursor` |
-| `summarize_article(article_id, max_length=500)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
 分页约定：
 
