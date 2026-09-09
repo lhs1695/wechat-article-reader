@@ -32,6 +32,25 @@ from ....shared.utils.ssrf_protection import (
 )
 from .base import BaseScraper
 
+# Inspect a prefix only; never log HTML. Used when js_content is missing.
+_BLOCKED_PAGE_MARKERS = (
+    'id="verify',
+    "id='verify",
+    "verify_bar",
+    "sec_verify",
+    "weui-captcha",
+    "当前环境异常",
+    "完成验证后即可继续",
+    "请输入验证码",
+    "操作过于频繁",
+    "访问过于频繁",
+)
+
+
+def _is_blocked_page(html: str) -> bool:
+    sample = html[:12_000]
+    return any(marker in sample for marker in _BLOCKED_PAGE_MARKERS)
+
 
 class WechatHttpxScraper(BaseScraper):
     """
@@ -95,13 +114,17 @@ class WechatHttpxScraper(BaseScraper):
         try:
             response = self._fetch_with_retry(str(url), headers=headers, cancel_event=cancel_event)
         except httpx.TimeoutException as e:
-            raise ScraperTimeoutError(f"请求超时: {e}") from e
+            logger.warning("抓取失败 kind=timeout")
+            raise ScraperTimeoutError("请求超时") from e
         except SSRFBlockedError as e:
-            raise ScraperBlockedError(f"SSRF防护拦截：{e}") from e
+            logger.warning("抓取失败 kind=blocked reason=ssrf")
+            raise ScraperBlockedError("SSRF防护拦截") from e
         except httpx.TransportError as e:
-            raise ScraperError(f"网络错误: {e}") from e
+            logger.warning("抓取失败 kind=network")
+            raise ScraperError("网络错误") from e
         except (ResponseTooLargeError, UnsafeContentTypeError) as e:
-            raise ScraperError(str(e)) from e
+            logger.warning("抓取失败 kind=unsafe_response")
+            raise ScraperError("响应不安全或过大") from e
 
         if cancel_event is not None and cancel_event.is_set():
             raise OperationCancelledError()
@@ -111,9 +134,12 @@ class WechatHttpxScraper(BaseScraper):
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             if status in (401, 403):
+                logger.warning("抓取失败 kind=blocked status={}", status)
                 raise ScraperBlockedError(f"请求被拒绝 (HTTP {status})") from e
             if status == 429:
+                logger.warning("抓取失败 kind=rate_limited status=429")
                 raise ScraperRateLimitedError("请求被限流 (HTTP 429)，请稍后重试") from e
+            logger.warning("抓取失败 kind=http status={}", status)
             raise ScraperError(f"HTTP错误 (HTTP {status})") from e
 
         # 解析HTML
@@ -141,7 +167,8 @@ class WechatHttpxScraper(BaseScraper):
                 allowed_content_types={"text/html", "application/xhtml+xml"},
             )
         except SSRFBlockedError as e:
-            raise ScraperBlockedError(f"SSRF防护拦截：{e}") from e
+            logger.warning("抓取失败 kind=blocked reason=ssrf")
+            raise ScraperBlockedError("SSRF防护拦截") from e
 
     def _fetch_with_retry(
         self,
@@ -226,6 +253,10 @@ class WechatHttpxScraper(BaseScraper):
         extracted_content = self._extract_content(soup)
         content_html = sanitize_html(self._normalize_image_sources(extracted_content))
         if not content_html:
+            if _is_blocked_page(html):
+                logger.warning("抓取失败 kind=blocked")
+                raise ScraperBlockedError("抓取被反爬限制")
+            logger.warning("抓取失败 kind=empty_content")
             raise ScraperError("无法提取文章内容")
 
         # 创建内容对象

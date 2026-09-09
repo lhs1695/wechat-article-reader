@@ -67,7 +67,11 @@ class FetchArticleUseCase:
         except InvalidURLError:
             raise
         except Exception as e:
-            raise InvalidURLError(f"无效的URL: {e}") from e
+            raise InvalidURLError("无效的URL") from e
+
+        if not article_url.is_wechat:
+            logger.warning("抓取失败 kind=not_wechat host={}", article_url.domain)
+            raise InvalidURLError("不是有效的微信公众号链接")
 
         normalized_url = str(article_url)
 
@@ -99,12 +103,17 @@ class FetchArticleUseCase:
                     return article
                 except ScraperError as e:
                     last_scraper_error = e
-                    logger.warning(f"抓取器 {scraper.name} 失败: {e}, 尝试下一个...")
+                    logger.warning(
+                        "抓取失败 scraper={} error_type={} code={}",
+                        scraper.name,
+                        type(e).__name__,
+                        e.code,
+                    )
                     continue
 
         if last_scraper_error is not None:
             raise last_scraper_error
-        raise UseCaseError(f"没有可用的抓取器能处理URL: {url}")
+        raise UseCaseError("没有可用的抓取器能处理该公众号链接")
 
     def _scrape_with(
         self, scraper: ScraperPort, url: ArticleURL, cancel_event: Event | None
@@ -124,8 +133,8 @@ class FetchArticleUseCase:
             # 保留 ScraperError 子类信息（如 ScraperBlockedError）
             raise
         except Exception as e:
-            logger.error(f"抓取失败: {e}")
-            raise ScraperError(f"抓取失败: {e}") from e
+            logger.error("抓取失败 error_type={}", type(e).__name__)
+            raise ScraperError("抓取失败") from e
 
     def _save_cache_if_needed(self, article: Article) -> None:
         if self._storage is None:

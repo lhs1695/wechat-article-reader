@@ -10,6 +10,7 @@ from wechat_article_reader.shared.exceptions import (
     ScraperBlockedError,
     ScraperError,
     ScraperRateLimitedError,
+    ScraperTimeoutError,
 )
 
 
@@ -159,6 +160,56 @@ def test_rejects_missing_article_content(scraper: WechatHttpxScraper) -> None:
         pytest.raises(ScraperError, match="无法提取文章内容"),
     ):
         scraper.scrape(ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"))
+
+
+def test_maps_timeout(scraper: WechatHttpxScraper) -> None:
+    with (
+        patch(
+            "wechat_article_reader.infrastructure.adapters.scrapers.wechat_httpx.safe_fetch_sync",
+            side_effect=httpx.TimeoutException("timed out"),
+        ),
+        pytest.raises(ScraperTimeoutError, match="请求超时"),
+    ):
+        scraper.scrape(ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"))
+
+
+def test_maps_verify_page_to_blocked_without_logging_body(
+    scraper: WechatHttpxScraper, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "SECRET_ARTICLE_BODY_SHOULD_NOT_APPEAR"
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 200
+    response.raise_for_status.return_value = None
+    response.text = f'<html><div id="verify_bar">请输入验证码 {secret}</div></html>'
+    captured: list[str] = []
+
+    def _capture(message: object, *args: object, **kwargs: object) -> None:
+        captured.append(str(message))
+        captured.extend(str(item) for item in args)
+        captured.extend(str(value) for value in kwargs.values())
+
+    monkeypatch.setattr(
+        "wechat_article_reader.infrastructure.adapters.scrapers.wechat_httpx.logger.warning",
+        _capture,
+    )
+    monkeypatch.setattr(
+        "wechat_article_reader.infrastructure.adapters.scrapers.wechat_httpx.logger.debug",
+        _capture,
+    )
+
+    with (
+        patch(
+            "wechat_article_reader.infrastructure.adapters.scrapers.wechat_httpx.safe_fetch_sync",
+            return_value=response,
+        ),
+        pytest.raises(ScraperBlockedError),
+    ):
+        scraper.scrape(ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"))
+
+    joined = " ".join(captured)
+    assert secret not in joined
+    assert "请输入验证码" not in joined
+    assert "kind=blocked" in joined
 
 
 def test_parses_localized_publish_time(scraper: WechatHttpxScraper) -> None:
