@@ -50,7 +50,7 @@
     { "id": "scrape-fetch", "from": "scraper", "to": "fetch", "label": "清洗后文章", "classification": "Article", "variant": "emphasis" },
     { "id": "persist", "from": "fetch", "to": "sqlite", "label": "save / get_by_url", "classification": "articles 行", "variant": "emphasis" },
     { "id": "project", "from": "sqlite", "to": "projector", "label": "content_html", "classification": "读时现算", "variant": "emphasis" },
-    { "id": "read-page", "from": "projector", "to": "markdown", "label": "分页 Markdown", "classification": "对外契约", "variant": "emphasis" },
+    { "id": "read-page", "from": "projector", "to": "markdown", "label": "Markdown 投影", "classification": "对外契约", "variant": "emphasis" },
     { "id": "summary-src", "from": "projector", "to": "deepseek", "label": "摘要源 Markdown", "classification": "模型输入", "variant": "dashed" },
     { "id": "summary-out", "from": "deepseek", "to": "summaries", "label": "四字段 JSON", "classification": "绑定 content_hash", "variant": "dashed" }
   ],
@@ -59,7 +59,7 @@
       "dot": "emerald",
       "title": "一条主链路",
       "items": [
-        "抓取 → SQLite → 读时投影 Markdown；分页结果不落库"
+        "抓取 → SQLite → 读时投影 Markdown；导出默认无图，分页结果不落库"
       ]
     },
     {

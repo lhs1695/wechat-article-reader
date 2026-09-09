@@ -109,7 +109,7 @@ class ArticleReadingService:
         *,
         cursor: int = 0,
         max_chars: int = DEFAULT_READ_MAX_CHARS,
-        include_images: bool = True,
+        include_images: bool = False,
         section: str | None = None,
     ) -> ArticleReadPage:
         if cursor < 0:
@@ -135,6 +135,7 @@ class ArticleReadingService:
             max_chars=max_chars,
             include_images=include_images,
             stop_before=window_end,
+            drop_section_teasers=section is not None,
         )
         has_more = next_cursor < window_end
         covering = _covering_section(projection.sections, cursor)
@@ -163,6 +164,7 @@ class ArticleReadingService:
         max_chars: int,
         include_images: bool,
         stop_before: int,
+        drop_section_teasers: bool = False,
     ) -> tuple[list[ReadingBlock], int]:
         selected: list[ReadingBlock] = []
         rendered_length = 0
@@ -236,6 +238,8 @@ class ArticleReadingService:
             index += 1
 
         selected, next_cursor = _drop_trailing_heading(selected, next_cursor)
+        if drop_section_teasers and next_cursor >= stop_before:
+            selected = _drop_trailing_section_teasers(blocks, selected, stop_before)
         return selected, next_cursor
 
     def _get_article(self, article_id: str | UUID):
@@ -364,3 +368,31 @@ def _drop_trailing_heading(
     if last.type == "heading" and (last.level or 1) <= _HEADING_BREAK_MAX_LEVEL:
         return selected[:-1], last.index
     return selected, next_cursor
+
+
+def _is_section_teaser(block: ReadingBlock) -> bool:
+    """WeChat template chrome that announces the next heading (05 / PHASE THREE)."""
+    if block.type != "paragraph" or block.links:
+        return False
+    text = (block.text or "").strip()
+    if not text or len(text) > 40:
+        return False
+    if text.isdigit() and len(text) <= 2:
+        return True
+    if text == "∞":
+        return True
+    compact = text.replace(" ", "").replace("-", "")
+    return compact.isascii() and compact.isupper() and compact.isalnum() and 2 <= len(compact) <= 28
+
+
+def _drop_trailing_section_teasers(
+    blocks: tuple[ReadingBlock, ...],
+    selected: list[ReadingBlock],
+    stop_before: int,
+) -> list[ReadingBlock]:
+    if stop_before >= len(blocks) or blocks[stop_before].type != "heading":
+        return selected
+    trimmed = list(selected)
+    while len(trimmed) > 1 and _is_section_teaser(trimmed[-1]):
+        trimmed.pop()
+    return trimmed

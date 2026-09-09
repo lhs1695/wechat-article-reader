@@ -120,6 +120,7 @@ def test_dirty_dom_fixture_uses_same_renderer_for_export_and_read_page(
     assert body in exported
     assert "## 原文内容" not in exported
     assert "![" not in exported
+    assert "![" not in page.content_markdown
     assert _TABLE_LINK in page.content_markdown
     assert _CODE_SNIPPET in page.content_markdown
     assert _RECOMMEND_ALPHA in page.content_markdown

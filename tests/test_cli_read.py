@@ -73,6 +73,36 @@ def test_read_uuid_json_is_machine_readable() -> None:
         cursor=0,
         max_chars=20_000,
         section="结语",
+        include_images=False,
+    )
+
+
+def test_read_images_flag_requests_image_markdown() -> None:
+    service = Mock()
+    service.read.return_value = ArticleReadPage(
+        article_id="6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        cursor=0,
+        next_cursor=None,
+        has_more=False,
+        content_markdown="正文",
+    )
+
+    with patch(
+        "wechat_article_reader.presentation.cli.app.get_container",
+        return_value=SimpleNamespace(article_reading_service=service),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["read", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "--images"],
+        )
+
+    assert result.exit_code == 0
+    service.read.assert_called_once_with(
+        "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        cursor=0,
+        max_chars=20_000,
+        section=None,
+        include_images=True,
     )
 
 

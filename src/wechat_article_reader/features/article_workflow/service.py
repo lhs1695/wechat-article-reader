@@ -306,7 +306,11 @@ class ArticleWorkflowService:
         for url in urls:
             try:
                 payload = self.export(
-                    url, target=target, skip_summary=skip_summary, include_body=include_body
+                    url,
+                    target=target,
+                    skip_summary=skip_summary,
+                    include_body=include_body,
+                    include_images=target != "markdown",
                 )
                 results.append(
                     BatchExportItemPayload(url, True, payload.article.title, payload.export_path)

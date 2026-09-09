@@ -5050,7 +5050,7 @@
         <path data-edge-from="scraper" data-edge-to="fetch" data-edge-label="清洗后文章" data-edge-key="1" data-edge-id="scrape-fetch" data-composition-points="315,186;315,186;315,356;315,356" d="M 315 186 L 315 186 L 315 356 L 315 356" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="fetch" data-edge-to="sqlite" data-edge-label="save / get_by_url" data-edge-key="2" data-edge-id="persist" data-composition-points="371,385;422.5,385;422.5,271;474,271" d="M 371 385 L 422.5 385 L 422.5 271 L 474 271" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="sqlite" data-edge-to="projector" data-edge-label="content_html" data-edge-key="3" data-edge-id="project" data-composition-points="586,271;689,271" d="M 586 271 L 689 271" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="projector" data-edge-to="markdown" data-edge-label="分页 Markdown" data-edge-key="4" data-edge-id="read-page" data-composition-points="801,264;852.5,264;852.5,157;904,157" d="M 801 264 L 852.5 264 L 852.5 157 L 904 157" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="projector" data-edge-to="markdown" data-edge-label="Markdown 投影" data-edge-key="4" data-edge-id="read-page" data-composition-points="801,264;852.5,264;852.5,157;904,157" d="M 801 264 L 852.5 264 L 852.5 157 L 904 157" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="projector" data-edge-to="deepseek" data-edge-label="摘要源 Markdown" data-edge-key="5" data-edge-id="summary-src" data-composition-points="801,278;852.5,278;852.5,378;904,378" d="M 801 278 L 852.5 278 L 852.5 378 L 904 378" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="deepseek" data-edge-to="summaries" data-edge-label="四字段 JSON" data-edge-key="6" data-edge-id="summary-out" data-composition-points="904,392;745,392;745,499;586,499" d="M 904 392 L 745 392 L 745 499 L 586 499" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
 
@@ -5175,9 +5175,9 @@
           <text x="637.5" y="261" class="t-backend" font-size="8" text-anchor="middle">content_html</text>
         <text data-detail="fine" x="637.5" y="272" class="t-dim" font-size="7" text-anchor="middle">读时现算</text>
         </g>
-        <g data-detail="context" data-edge-from="projector" data-edge-to="markdown" data-edge-label="分页 Markdown" data-edge-key="4" data-edge-id="read-page">
+        <g data-detail="context" data-edge-from="projector" data-edge-to="markdown" data-edge-label="Markdown 投影" data-edge-key="4" data-edge-id="read-page">
           <rect x="814.65" y="189.5" width="75.7" height="27" rx="4" class="c-mask"/>
-          <text x="852.5" y="200.5" class="t-backend" font-size="8" text-anchor="middle">分页 Markdown</text>
+          <text x="852.5" y="200.5" class="t-backend" font-size="8" text-anchor="middle">Markdown 投影</text>
         <text data-detail="fine" x="852.5" y="211.5" class="t-dim" font-size="7" text-anchor="middle">对外契约</text>
         </g>
         <g data-detail="context" data-edge-from="projector" data-edge-to="deepseek" data-edge-label="摘要源 Markdown" data-edge-key="5" data-edge-id="summary-src">

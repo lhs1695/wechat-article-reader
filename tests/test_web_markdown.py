@@ -15,16 +15,22 @@ from wechat_article_reader.presentation.web.app import create_app
 
 
 def test_article_markdown_endpoint_reuses_reading_service() -> None:
-    reading = SimpleNamespace(
-        ingest=lambda url: SimpleNamespace(article_id="article-1"),
-        read=lambda article_id, cursor, max_chars: SimpleNamespace(
+    seen: list[bool] = []
+
+    def read(article_id, cursor, max_chars, include_images=False):
+        seen.append(include_images)
+        return SimpleNamespace(
             to_dict=lambda: {
                 "success": True,
                 "article_id": article_id,
                 "cursor": cursor,
                 "content_markdown": "# 标题\n\n正文",
             }
-        ),
+        )
+
+    reading = SimpleNamespace(
+        ingest=lambda url: SimpleNamespace(article_id="article-1"),
+        read=read,
     )
     app = create_app(container=SimpleNamespace(article_reading_service=reading), prewarm=False)
 
@@ -35,6 +41,7 @@ def test_article_markdown_endpoint_reuses_reading_service() -> None:
 
     assert response.status_code == 200
     assert response.json()["content_markdown"] == "# 标题\n\n正文"
+    assert seen == [False]
 
 
 def test_summarize_endpoint_returns_complete_structured_summary() -> None:
@@ -81,6 +88,16 @@ def test_summarize_endpoint_returns_complete_structured_summary() -> None:
     }
 
 
+def test_home_page_describes_export_first_pipeline() -> None:
+    app = create_app(container=SimpleNamespace(), prewarm=False)
+
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 200
+    assert "统一 Markdown 投影" in response.text
+    assert "分页 Markdown" not in response.text
+
+
 def test_article_page_labels_and_separates_tags_without_markdown_button() -> None:
     app = create_app(container=SimpleNamespace(), prewarm=False)
 
@@ -90,6 +107,7 @@ def test_article_page_labels_and_separates_tags_without_markdown_button() -> Non
     assert '<h4 class="summary-tags-title">标签</h4>' in response.text
     assert ".join(' ');" in response.text
     assert "markdown-action" not in response.text
+    assert "下载 Markdown 默认无图" in response.text
 
 
 def _metadata() -> ArticleMetadataPayload:
@@ -133,9 +151,13 @@ def test_export_endpoint_returns_download_url(tmp_path, monkeypatch) -> None:
         lambda: tmp_path,
     )
     payload = ArticleExportPayload(_metadata(), str(exported), True)
-    workflow = SimpleNamespace(
-        export=lambda url, **_: payload,
-    )
+    seen: dict[str, object] = {}
+
+    def export(url, **kwargs):
+        seen.update(kwargs)
+        return payload
+
+    workflow = SimpleNamespace(export=export)
     app = create_app(container=SimpleNamespace(article_workflow_service=workflow), prewarm=False)
 
     response = TestClient(app).post(
@@ -148,6 +170,7 @@ def test_export_endpoint_returns_download_url(tmp_path, monkeypatch) -> None:
     assert body["success"] is True
     assert body["export_path"] == "article.md"
     assert "article.md" in body["download_url"]
+    assert seen.get("include_images") is False
 
 
 def test_batch_process_endpoint_maps_export_results(tmp_path, monkeypatch) -> None:

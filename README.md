@@ -50,7 +50,7 @@ python -m wechat_article_reader fetch "https://mp.weixin.qq.com/s/example" --no-
 - 不把一篇超长文自动 MapReduce 成「看起来完整」的摘要；超过模型输入上限就明确失败，交给分页阅读。
 - 不把内部 block ID、content hash 当成对外 API。
 
-图片只在 Markdown 里保留远程 HTTPS 链接和说明文字。MCP 默认 `include_images=false`，避免装饰图占用上下文。
+图片只在 Markdown 里保留远程 HTTPS 链接和说明文字。MCP / CLI `read` / Web Markdown 导出默认都不含图（`include_images=false`），避免装饰图占用上下文。需要图时：MCP 传 `include_images=true`，CLI 加 `--images`，Web `GET /api/article/markdown?include_images=true`。网页「原文抓取」仍显示清洗后的 HTML（可含图）。
 
 ## 环境
 
@@ -103,6 +103,7 @@ python -m wechat_article_reader fetch "https://mp.weixin.qq.com/s/example" --no-
 python -m wechat_article_reader read "https://mp.weixin.qq.com/s/example"
 python -m wechat_article_reader read "ARTICLE_UUID" --cursor 12 --max-chars 8000
 python -m wechat_article_reader read "ARTICLE_UUID" --section "结语" --output-format json
+python -m wechat_article_reader read "ARTICLE_UUID" --images
 
 python -m wechat_article_reader batch URL_1 URL_2 --export html
 python -m wechat_article_reader web
@@ -115,7 +116,7 @@ python -m wechat_article_reader db current
 
 `cache-stats` 只读本机 SQLite：文章数、摘要条数、`created_at` 日期范围。库文件在 `.runtime/`，不要提交。旧文件名 `wechat_summarizer.db` 在尚未出现新库时仍会打开。
 
-`read` 的 `--section` 只返回该节；与 `--cursor` 同时出现时在该节内续读。不传 section 且全文不超过 `--max-chars`（默认 20000）则一次读完。
+`read` 的 `--section` 只返回该节；与 `--cursor` 同时出现时在该节内续读。不传 section 且全文不超过 `--max-chars`（默认 20000）则一次读完。默认不含图，需要图时加 `--images`。
 
 ## Web
 
@@ -123,7 +124,13 @@ python -m wechat_article_reader db current
 python -m wechat_article_reader web
 ```
 
-FastAPI + 模板页：粘贴 URL 抓取、阅读、摘要、导出。HTTP JSON 与页面共用 `ArticleWorkflowService` / `ArticleReadingService`。`GET /api/article/markdown` 走与 MCP 相同的分页 Markdown 投影（Web 默认仍带图，和 MCP 默认藏图不同）。
+Windows 也可双击 `run_web.pyw`（无控制台，就绪后打开浏览器）或 `run_web.cmd`（有控制台）。都监听 `http://127.0.0.1:8000`。失败时 `run_web.pyw` 写仓库根目录 `error.log`。
+
+页面：首页状态、单篇抓取/摘要/下载、批量导出、历史（缓存列表）。HTTP JSON 与页面共用 `ArticleWorkflowService` / `ArticleReadingService`。
+
+- `GET /api/article/markdown` 走与 MCP 相同的分页 Markdown 投影，**默认无图**（`include_images=false`）。
+- 下载 Markdown 默认无图；下载 HTML 仍可带图。
+- 页面里的「原文」是清洗后的公众号 HTML，不是导出文件。
 
 ## MCP
 

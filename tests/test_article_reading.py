@@ -424,6 +424,30 @@ def test_section_seek_stops_at_section_end() -> None:
     assert "后面还有" not in page.content_markdown
 
 
+def test_section_seek_drops_next_heading_teasers_but_keeps_short_prose() -> None:
+    article = _article(
+        "<h3>第二阶段：骨架</h3><p>该用规则的地方用规则。</p>"
+        "<p>05</p><p>PHASE THREE</p>"
+        "<h3>第三阶段：执行</h3><p>后面还有</p>"
+    )
+    keep_short = _article(
+        "<h3>设计逻辑</h3><p>不重复了。</p><h3>下一节</h3><p>乙</p>"
+    )
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+    keep_service = ArticleReadingService(_Workflow(keep_short), _Storage(keep_short))
+
+    sliced = service.read(article.id, section="第二阶段", max_chars=1_000)
+    whole = service.read(article.id, max_chars=20_000)
+    prose = keep_service.read(keep_short.id, section="设计逻辑", max_chars=1_000)
+
+    assert sliced.has_more is False
+    assert "该用规则的地方用规则" in sliced.content_markdown
+    assert "PHASE THREE" not in sliced.content_markdown
+    assert "后面还有" not in sliced.content_markdown
+    assert "PHASE THREE" in whole.content_markdown
+    assert "不重复了" in prose.content_markdown
+
+
 def test_section_and_cursor_continue_inside_section_only() -> None:
     para = "段" * 800
     article = _article(f"<h2>甲节</h2><p>{para}</p><p>{para}</p><h2>乙节</h2><p>后面还有</p>")

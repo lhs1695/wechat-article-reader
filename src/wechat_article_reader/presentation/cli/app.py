@@ -207,6 +207,11 @@ def fetch(
     default="text",
     show_default=True,
 )
+@click.option(
+    "--images",
+    is_flag=True,
+    help="保留图片语法（默认与 MCP / Markdown 导出一致，不含图）",
+)
 def read_article_command(
     source: str,
     refresh: bool,
@@ -214,6 +219,7 @@ def read_article_command(
     section: str | None,
     max_chars: int,
     output_format: str,
+    images: bool,
 ) -> None:
     """从 URL 或缓存文章 UUID 输出适合 Agent 阅读的 Markdown。"""
     import json as json_lib
@@ -230,7 +236,13 @@ def read_article_command(
         else:
             article_id = str(UUID(source))
 
-        page = service.read(article_id, cursor=cursor, max_chars=max_chars, section=section)
+        page = service.read(
+            article_id,
+            cursor=cursor,
+            max_chars=max_chars,
+            section=section,
+            include_images=images,
+        )
         if output_format == "json":
             payload = {"success": True, **page.to_dict()}
             click.echo(json_lib.dumps(payload, ensure_ascii=True, indent=2))

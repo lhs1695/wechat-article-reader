@@ -93,6 +93,7 @@ def read_article_markdown(
     url: str = Query(..., min_length=1, max_length=2048),
     cursor: int = Query(0, ge=0),
     max_chars: int = Query(20_000, ge=1_000, le=20_000),
+    include_images: bool = Query(False),
     container: ContainerDependency = None,  # type: ignore[assignment]
 ) -> dict[str, object]:
     """Return the same paginated Markdown projection used by the MCP reader."""
@@ -101,7 +102,10 @@ def read_article_markdown(
     return {
         "success": True,
         **container.article_reading_service.read(
-            article_id, cursor=cursor, max_chars=max_chars
+            article_id,
+            cursor=cursor,
+            max_chars=max_chars,
+            include_images=include_images,
         ).to_dict(),
     }
 
@@ -147,6 +151,7 @@ def export_article(
         payload = container.article_workflow_service.export(
             req.url,
             target=req.target,
+            include_images=req.target != "markdown",
             skip_summary=req.skip_summary,
             summary_content=req.summary_content,
             key_points=req.key_points,
