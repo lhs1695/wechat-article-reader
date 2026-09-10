@@ -97,6 +97,9 @@ def test_home_page_describes_export_first_pipeline() -> None:
     assert "统一 Markdown 投影" in response.text
     assert "默认无图" in response.text
     assert "分页 Markdown" not in response.text
+    assert "去单篇贴链接" in response.text
+    assert "可用导出器" not in response.text
+    assert "可用摘要器" not in response.text
 
 
 def test_article_page_labels_and_separates_tags_without_markdown_button() -> None:
@@ -109,6 +112,20 @@ def test_article_page_labels_and_separates_tags_without_markdown_button() -> Non
     assert ".join(' ');" in response.text
     assert "markdown-action" not in response.text
     assert "下载 Markdown 默认无图" in response.text
+    assert "loading('抓取中', fetchHint)" in response.text
+    assert "loading('生成摘要中', summarizeHint)" in response.text
+    assert "DeepSeek 通常需要数十秒" in response.text
+    assert "function loading(msg){" not in response.text
+
+
+def test_history_page_uses_status_column() -> None:
+    app = create_app(container=SimpleNamespace(), prewarm=False)
+
+    response = TestClient(app).get("/history")
+
+    assert response.status_code == 200
+    assert "<th>状态</th>" in response.text
+    assert "<th>操作</th>" not in response.text
 
 
 def _metadata() -> ArticleMetadataPayload:

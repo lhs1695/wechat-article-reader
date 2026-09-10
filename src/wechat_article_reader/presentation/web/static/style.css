@@ -199,7 +199,10 @@ td a:hover{color:#fafafa}
 .empty td{text-align:center;padding:40px;color:#52525b;font-style:italic}
 
 /* ── Stats Grid ── */
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.stats{display:grid;grid-template-columns:minmax(12rem,16rem);gap:12px}
+.home-next{margin-top:16px;font-size:13px}
+.home-next a{color:#a1a1aa;text-decoration:none}
+.home-next a:hover{color:#fafafa}
 .stat{
   padding:16px 20px;
   background:#0f0f0f;
@@ -254,6 +257,8 @@ body.light .result.err{border-color:#a1a1aa}
 body.light .result .body{color:#52525b}
 body.light .stat{background:#fafafa;border-color:#e4e4e7}
 body.light .stat-value{color:#09090b}
+body.light .home-next a{color:#52525b}
+body.light .home-next a:hover{color:#09090b}
 body.light .batch-row{background:#fafafa;border-color:#e4e4e7}
 body.light th{color:#a1a1aa;border-color:#e4e4e7}
 body.light td{border-color:#f4f4f5;color:#52525b}

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wechat-article-reader"
 version = "3.1.0"
-description = "微信公众号文章阅读、缓存与摘要服务"
+description = "微信公众号文章：抓取 → SQLite 缓存 → Markdown 阅读；摘要可选"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
@@ -180,4 +180,3 @@ exclude_lines = [
 ]
 show_missing = true
 skip_covered = true
-fail_under = 60

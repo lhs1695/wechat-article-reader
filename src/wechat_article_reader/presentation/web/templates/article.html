@@ -42,11 +42,12 @@ function selectAction(btn){
   $('out').innerHTML='';
 }
 
-function loading(msg){
+function loading(msg, hint){
   loadingStartedAt=Date.now();
   const render=()=>{
     const seconds=Math.floor((Date.now()-loadingStartedAt)/1000);
-    $('out').innerHTML=`<div class="loading"><span class="spinner"></span><span>${msg}… ${seconds}s</span><small>DeepSeek 通常需要数十秒；长文会更久。</small></div>`;
+    const note=hint?`<small>${hint}</small>`:'';
+    $('out').innerHTML=`<div class="loading"><span class="spinner"></span><span>${msg}… ${seconds}s</span>${note}</div>`;
   };
   render();
   clearInterval(loadingTimer);
@@ -133,8 +134,11 @@ async function go(){
   processing=true;
   try{
 
+  const fetchHint='通常几秒内返回；非公众号或反爬会明确失败。';
+  const summarizeHint='DeepSeek 通常需要数十秒；长文会更久。无 Key 会明确失败。';
+
   if(curAction==='fetch'){
-    loading('抓取中');
+    loading('抓取中', fetchHint);
     const r=await fetch('/api/article/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
     const d=await r.json();
     stopLoading();
@@ -150,7 +154,7 @@ async function go(){
     _toast('抓取成功','ok');
 
   }else if(curAction==='summarize'){
-    loading('生成摘要中');
+    loading('生成摘要中', summarizeHint);
     const r=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
     const d=await r.json();
     const elapsedMs=stopLoading();
@@ -166,12 +170,12 @@ async function go(){
     _toast('摘要完成','ok');
 
   }else{
-    loading('抓取中');
+    loading('抓取中', fetchHint);
     const fr=await fetch('/api/article/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
     const fd=await fr.json();
     stopLoading();
     if(!fr.ok || !fd.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(fd.error||'抓取请求失败')}</div>`;_toast(fd.error||'抓取请求失败','err');return}
-    loading('生成摘要中');
+    loading('生成摘要中', summarizeHint);
     const sr=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
     const sd=await sr.json();
     const elapsedMs=stopLoading();

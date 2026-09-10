@@ -10,19 +10,15 @@
   <div class="card-title">本机缓存</div>
   <div class="stats">
     <div class="stat"><div class="stat-value" id="n-c">-</div><div class="stat-label">缓存文章</div></div>
-    <div class="stat"><div class="stat-value" id="n-e">-</div><div class="stat-label">可用导出器</div></div>
-    <div class="stat"><div class="stat-value" id="n-s">-</div><div class="stat-label">可用摘要器</div></div>
   </div>
-  <div id="detail" style="margin-top:16px;color:#71717a;font-size:13px"></div>
+  <p class="home-next"><a href="/article">去单篇贴链接</a></p>
 </div>
 
 <script nonce="{{ request.state.csp_nonce }}">
 fetch('/api/status').then(r=>r.json()).then(d=>{
-  document.getElementById('n-s').textContent=d.summarizers.length;
-  document.getElementById('n-e').textContent=d.exporters.length;
   document.getElementById('n-c').textContent=d.total_cached;
-  document.getElementById('detail').textContent=
-    `导出器: ${d.exporters.join(', ')}  |  摘要器: ${d.summarizers.join(', ') || '无（仍可导出）'}`;
+}).catch(()=>{
+  document.getElementById('n-c').textContent='—';
 });
 </script>
 {% endblock %}
