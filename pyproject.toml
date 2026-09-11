@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wechat-article-reader"
 version = "3.1.0"
-description = "微信公众号文章：抓取 → SQLite 缓存 → Markdown 阅读；摘要可选"
+description = "给 Agent 的微信公众号阅读 MCP：抓取 → SQLite → Markdown；摘要可选"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
 authors = [
     {name = "lhs1695"}
 ]
-keywords = ["wechat", "article", "reader", "summarizer", "deepseek", "markdown", "mcp"]
+keywords = ["wechat", "article", "reader", "summarizer", "deepseek", "markdown", "mcp", "agent"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",

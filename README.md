@@ -1,8 +1,8 @@
-# 微信文章阅读服务
+# 微信文章阅读 MCP
 
 [![CI](https://github.com/lhs1695/wechat-article-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/lhs1695/wechat-article-reader/actions/workflows/ci.yml)
 
-一篇微信公众号文章 → SQLite → **同一套 Markdown 投影** → 导出。摘要可选，没有 API Key 也能导出正文。
+给 Agent 的微信公众号阅读 MCP（个人项目）。一篇公众号 URL → SQLite → **同一套 Markdown 投影** → 导出。摘要可选，没有 API Key 也能导出正文。
 
 ```text
 微信公众号 URL
@@ -72,7 +72,7 @@
 
 ## 为什么这么设计
 
-- **四个工具按副作用拆开。** 只有 `ingest_article` 联网写库；读缓存和打模型不混在一次调用里。对照那种「一个 `read_url` 什么都干」的做法，调用方能从工具名看出这次会不会写库、会不会烧 token；代价是 Agent 必须先 ingest 再 read。
+- **四个工具按副作用拆开。** 只有 `ingest_article` 联网写库；读缓存和打模型不混在一次调用里。调用方能从工具名看出这次会不会写库、会不会烧 token；代价是 Agent 必须先 ingest 再 read。
 - **超长文明确失败，不自动 MapReduce。** 超过 `DEEPSEEK__MAX_INPUT_CHARS` 就 `article_too_long`，交给分页阅读。代价是没有一份「看起来完整」的自动摘要，也不服务端偷偷截断再假装读完。
 - **三个入口默认不含图。** 装饰图不该占 Agent 上下文；需要时显式打开。代价是默认页只留说明文字，看不到配图。
 - **失败走 MCP isError，而不是 `{success:false}` 假成功体。** 宿主能把失败和正文分开，模型不该在成功通道里解析错误对象。代价是客户端必须按协议处理 isError。
@@ -105,9 +105,7 @@ Web 三种启动（都监听 `http://127.0.0.1:8000`）：`python -m wechat_arti
 
 ## 验证与 CI
 
-[![CI](https://github.com/lhs1695/wechat-article-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/lhs1695/wechat-article-reader/actions/workflows/ci.yml)
-
-CI 跑 pytest，以及 ruff check、ruff format、mypy、pip-audit、build。
+CI 两 job：`test` 跑 pytest；`quality` 是八道门——依赖 hash 锁定、ruff check、ruff format、mypy、`pip check`、pip-audit、构建、安装冒烟。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
