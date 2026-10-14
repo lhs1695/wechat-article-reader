@@ -26,6 +26,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         """抓取或命中缓存，返回 article_id、标题、字数、块数和章节目录。
 
         这是唯一会抓取微信公众号并写 SQLite 的工具。refresh=true 时强制重新抓取。
+        要整篇 Markdown 文件时，随后调用 export_article 写盘；不要拼接 read_article 分页。
         默认 toc_level=2（H2）。若文章没有这么浅的标题（例如正文全是 H3），目录自动对齐到最浅一层。
         需要更细的纲时再提高 toc_level。篇幅不超过 read_article 的 max_chars 时一次读完。
         更长的文章按 sections 标题或 start_cursor 跳读（传 section 只返回该节）；

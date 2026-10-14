@@ -1,32 +1,24 @@
 """Markdown导出器"""
 
+import json
 from pathlib import Path
 
 from loguru import logger
 
 from ....domain.entities import Article
 from ....features.article_reading import ArticleReadingProjector, MarkdownReadingRenderer
-from ....features.article_reading.projection import escape_markdown_text
+from ....features.article_reading.projection import escape_markdown_text, markdown_destination
 from ....shared.exceptions import ExporterError
 from .base import BaseExporter
 
 
 def _escape_yaml_value(value: str) -> str:
-    """转义 YAML 值中的特殊字符
-
-    处理的字符：
-    - 双引号 -> 转义
-    - 换行符 -> 空格
-    - 反斜杠 -> 双反斜杠
-    """
-    if not value:
-        return ""
-    # 先处理反斜杠，再处理其他
-    value = value.replace("\\", "\\\\")
-    value = value.replace('"', '\\"')
-    value = value.replace("\n", " ")
-    value = value.replace("\r", " ")
-    return value
+    """Encode a YAML double-quoted scalar using JSON-compatible escapes."""
+    return (
+        json.dumps(value, ensure_ascii=False)[1:-1]
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
 
 
 class MarkdownExporter(BaseExporter):
@@ -92,6 +84,14 @@ class MarkdownExporter(BaseExporter):
         include_body = options.get("include_body", True)
         include_frontmatter = options.get("include_frontmatter", True)
         include_images = options.get("include_images", False)
+        projection = ArticleReadingProjector().project(article) if include_body else None
+        body_blocks = list(projection.blocks) if projection else []
+        if (
+            body_blocks
+            and body_blocks[0].type == "heading"
+            and body_blocks[0].text.strip() == article.title.strip()
+        ):
+            body_blocks.pop(0)
 
         parts = []
 
@@ -107,7 +107,7 @@ class MarkdownExporter(BaseExporter):
                 frontmatter_lines.append(f'author: "{_escape_yaml_value(article.author)}"')
             if article.publish_time:
                 frontmatter_lines.append(f"date: {article.publish_time_str}")
-            frontmatter_lines.append(f'url: "{article.url!s}"')
+            frontmatter_lines.append(f'url: "{_escape_yaml_value(str(article.url))}"')
             frontmatter_lines.append(f"word_count: {article.word_count}")
 
             if article.summary and article.summary.tags:
@@ -140,14 +140,13 @@ class MarkdownExporter(BaseExporter):
             parts.append("")
 
         if include_body:
-            projection = ArticleReadingProjector().project(article)
             parts.append(
-                MarkdownReadingRenderer().render(projection, include_images=include_images)
+                MarkdownReadingRenderer().render(body_blocks, include_images=include_images)
             )
 
         parts.append("")
         parts.append("---")
         parts.append("")
-        parts.append(f"[原文链接]({article.url})")
+        parts.append(f"[原文链接](<{markdown_destination(str(article.url))}>)")
 
         return "\n".join(parts)

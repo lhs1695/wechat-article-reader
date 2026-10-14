@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from html import escape
 
 from bs4 import BeautifulSoup
 
@@ -27,7 +28,7 @@ class ArticleContent:
 
         # 如果只有纯文本，简单包装为HTML
         if self.text and not self.html:
-            object.__setattr__(self, "html", f"<p>{self.text}</p>")
+            object.__setattr__(self, "html", f"<p>{escape(self.text)}</p>")
 
     @staticmethod
     def _extract_text(html: str) -> str:
@@ -60,7 +61,7 @@ class ArticleContent:
         """从纯文本创建内容对象"""
         # 简单将文本转为段落
         paragraphs = text.split("\n\n")
-        html = "\n".join(f"<p>{p}</p>" for p in paragraphs if p.strip())
+        html = "\n".join(f"<p>{escape(p)}</p>" for p in paragraphs if p.strip())
         return cls(html=html, text=text, images=())
 
     @staticmethod

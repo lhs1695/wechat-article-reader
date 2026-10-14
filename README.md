@@ -64,6 +64,8 @@
 
 图片只在 Markdown 里保留远程 HTTPS 链接和说明文字。三个入口默认都不含图，需要时显式打开：MCP `include_images=true`，CLI `--images`，Web `GET /api/article/markdown?include_images=true`。
 
+Markdown 导出保留代码缩进、空行、语言标记、嵌套列表、引用与行内格式。普通长段落的内部分块会合并；代码和表格保持完整。目标格式为 GFM；合并单元格等复杂表格保留经过清洗的 HTML，阅读器需要支持 HTML 才能显示这些布局。
+
 阅读时先看这几条，其余在 [用法](docs/用法.md)：
 
 - 要整篇 md 落盘：`ingest_article` 之后 `export_article`，不要用 `read_article` 翻页拼接。

@@ -31,6 +31,10 @@ class ReadingBlock:
     caption: str | None = None
     markdown: str | None = None
     links: tuple[ReadingLink, ...] = ()
+    language: str | None = None
+    list_marker: str | None = None
+    children: tuple[ReadingBlock, ...] = ()
+    continues_previous: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         payload = {key: value for key, value in asdict(self).items() if value is not None}

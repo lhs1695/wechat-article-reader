@@ -13,7 +13,7 @@ from .dto import (
     ReadingBlock,
     ReadingSection,
 )
-from .projection import ArticleReadingProjector, escape_markdown_text
+from .projection import ArticleReadingProjector, escape_markdown_text, image_count
 from .renderer import MarkdownReadingRenderer
 
 if TYPE_CHECKING:
@@ -100,7 +100,7 @@ class ArticleReadingService:
             article_id=str(persisted.id),
             title=persisted.title,
             word_count=persisted.word_count,
-            image_count=sum(block.type == "image" for block in projection.blocks),
+            image_count=image_count(projection.blocks),
             cached=cached,
             sections=_sections_for_toc(projection.sections, toc_level, len(projection.blocks)),
             block_count=len(projection.blocks),
@@ -122,7 +122,7 @@ class ArticleReadingService:
             account_name=article.account_name,
             publish_time=article.publish_time_str,
             word_count=article.word_count,
-            image_count=sum(block.type == "image" for block in projection.blocks),
+            image_count=image_count(projection.blocks),
             fetched_at=article.source.scraped_at.isoformat() if article.source else None,
             sections=_sections_for_toc(projection.sections, toc_level, len(projection.blocks)),
             block_count=len(projection.blocks),

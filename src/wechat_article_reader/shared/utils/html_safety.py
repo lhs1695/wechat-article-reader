@@ -31,6 +31,8 @@ _ALLOWED_TAGS = {
     "section",
     "span",
     "strong",
+    "sub",
+    "sup",
     "table",
     "tbody",
     "td",
@@ -47,6 +49,8 @@ _ALLOWED_ATTRIBUTES = {
     "blockquote": {"cite"},
     "img": {"alt", "height", "src", "title", "width"},
     "ol": {"start"},
+    "code": {"data-lang"},
+    "pre": {"data-lang"},
     "td": {"colspan", "rowspan"},
     "th": {"colspan", "rowspan", "scope"},
 }

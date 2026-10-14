@@ -28,7 +28,7 @@ def test_plain_article_text_cannot_create_markdown_links() -> None:
         '<p>文字 [伪链接](https://example.com) <a href="https://example.org">真实链接</a></p>'
     )
     markdown = MarkdownReadingRenderer().render(ArticleReadingProjector().project(article))
-    assert r"\[伪链接\]\(https://example\.com\)" in markdown
+    assert r"\[伪链接\](https://example.com)" in markdown
     assert "[真实链接](<https://example.org>)" in markdown
 
 
