@@ -232,6 +232,28 @@ class TestCreateSafeAsyncClient:
 class TestSafeFetchRedirects:
     """safe_fetch 重定向安全测试"""
 
+    def test_sync_fetch_rejects_cross_domain_redirect_before_request(self):
+        visited: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            visited.append(request.url.host)
+            return httpx.Response(302, headers={"location": "https://example.com/article"})
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        with (
+            patch(
+                "wechat_article_reader.shared.utils.ssrf_protection.create_safe_client",
+                return_value=client,
+            ),
+            patch.object(SSRFSafeSyncTransport, "validate_url", return_value="ok"),
+            pytest.raises(SSRFBlockedError, match="allowed origin"),
+        ):
+            safe_fetch_sync(
+                "https://mp.weixin.qq.com/s/example",
+                allowed_redirect=lambda target: httpx.URL(target).host == "mp.weixin.qq.com",
+            )
+        assert visited == ["mp.weixin.qq.com"]
+
     @pytest.mark.asyncio
     async def test_resolves_relative_redirect_before_validation(self):
         """相对重定向会先规范化为绝对 URL 再验证"""

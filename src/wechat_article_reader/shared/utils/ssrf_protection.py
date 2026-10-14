@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -321,6 +322,7 @@ async def safe_fetch(
     *,
     method: str = "GET",
     max_redirects: int = 5,
+    allowed_redirect: Callable[[str], bool] | None = None,
     **kwargs: Any,
 ) -> httpx.Response:
     request_kwargs = dict(kwargs)
@@ -352,6 +354,8 @@ async def safe_fetch(
                 )
             await response.aclose()
             redirect_url = urljoin(current_url, redirect_url)
+            if allowed_redirect is not None and not allowed_redirect(redirect_url):
+                raise SSRFBlockedError("Redirect target is outside the allowed origin")
 
             logger.debug(
                 f"SSRF safe redirect [{redirect_count + 1}/{max_redirects}]: "
@@ -374,6 +378,7 @@ def safe_fetch_sync(
     *,
     method: str = "GET",
     max_redirects: int = 5,
+    allowed_redirect: Callable[[str], bool] | None = None,
     **kwargs: Any,
 ) -> httpx.Response:
     request_kwargs = dict(kwargs)
@@ -405,6 +410,8 @@ def safe_fetch_sync(
                 )
             response.close()
             redirect_url = urljoin(current_url, redirect_url)
+            if allowed_redirect is not None and not allowed_redirect(redirect_url):
+                raise SSRFBlockedError("Redirect target is outside the allowed origin")
 
             logger.debug(
                 f"SSRF safe redirect [{redirect_count + 1}/{max_redirects}]: "

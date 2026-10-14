@@ -38,6 +38,11 @@ def _clean_text(value: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def escape_markdown_text(value: str) -> str:
+    """Keep source text literal; only real HTML links become Markdown links."""
+    return re.sub(r"([\\`*_{}\[\]()#+.!|<>~-])", r"\\\1", value)
+
+
 def _split_text(value: str, limit: int = _MAX_BLOCK_CHARS) -> list[str]:
     value = _clean_text(value)
     if len(value) <= limit:
@@ -173,7 +178,7 @@ def _inline_content(node: Tag) -> _InlineContent:
     def walk(current: Tag | NavigableString) -> None:
         if isinstance(current, NavigableString):
             text = str(current)
-            segments.append(_InlineSegment(text, text))
+            segments.append(_InlineSegment(text, escape_markdown_text(text)))
             return
         if not isinstance(current, Tag):
             return
@@ -335,7 +340,10 @@ class ArticleReadingProjector:
             if segment.link is not None or len(segment.text) <= _MAX_BLOCK_CHARS:
                 pieces = [segment]
             else:
-                pieces = [_InlineSegment(part, part) for part in _split_text(segment.text)]
+                pieces = [
+                    _InlineSegment(part, escape_markdown_text(part))
+                    for part in _split_text(segment.text)
+                ]
             for piece in pieces:
                 if current and current_length + len(piece.text) > _MAX_BLOCK_CHARS:
                     flush()
@@ -353,6 +361,8 @@ class ArticleReadingProjector:
     ) -> None:
         for part in _split_text(value):
             draft: dict[str, object] = {"type": block_type, "text": part}
+            if block_type != "code":
+                draft["markdown"] = escape_markdown_text(part)
             if level is not None:
                 draft["level"] = level
             drafts.append(draft)

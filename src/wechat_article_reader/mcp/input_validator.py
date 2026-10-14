@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
+from pathlib import Path
 from urllib.parse import urlparse
 
 
 class MCPValidationError(Exception):
     """MCP 输入验证异常"""
+
+
+export_root_context: ContextVar[Path | None] = ContextVar("mcp_export_root", default=None)
 
 
 class MCPInputValidator:
@@ -63,6 +68,26 @@ class MCPInputValidator:
             return str(UUID(text))
         except (TypeError, ValueError) as exc:
             raise MCPValidationError("article_id must be a UUID") from exc
+
+    @classmethod
+    def validate_export_path(cls, path: str) -> str:
+        if not isinstance(path, str) or not path.strip():
+            raise MCPValidationError("path must be a non-empty absolute path")
+        if len(path) > 4096:
+            raise MCPValidationError("path too long")
+        target = Path(path.strip())
+        if not target.is_absolute():
+            raise MCPValidationError("path must be absolute")
+        if target.exists() and target.is_dir():
+            resolved = target.resolve()
+        elif target.suffix.casefold() != ".md":
+            raise MCPValidationError("path must be an .md file or an existing directory")
+        else:
+            resolved = target.resolve()
+        root = export_root_context.get()
+        if root is not None and not resolved.is_relative_to(root):
+            raise MCPValidationError("path must be inside the configured export directory")
+        return str(resolved)
 
     @classmethod
     def sanitize_text(cls, text: str, max_length: int = 10_000) -> str:

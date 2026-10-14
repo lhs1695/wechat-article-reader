@@ -6,6 +6,7 @@ from loguru import logger
 
 from ....domain.entities import Article
 from ....features.article_reading import ArticleReadingProjector, MarkdownReadingRenderer
+from ....features.article_reading.projection import escape_markdown_text
 from ....shared.exceptions import ExporterError
 from .base import BaseExporter
 
@@ -119,7 +120,7 @@ class MarkdownExporter(BaseExporter):
             parts.append("\n".join(frontmatter_lines))
 
         # 标题
-        parts.append(f"# {article.title}\n")
+        parts.append(f"# {escape_markdown_text(article.title)}\n")
 
         # 摘要部分
         if include_summary and article.summary:

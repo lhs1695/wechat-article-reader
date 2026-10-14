@@ -147,7 +147,10 @@ class SqlAlchemyArticleRepository:
         )
         summary_model = self._session.scalar(
             select(SummaryModel)
-            .where(SummaryModel.article_id == model.id)
+            .where(
+                SummaryModel.article_id == model.id,
+                SummaryModel.content_hash == model.content_hash,
+            )
             .order_by(SummaryModel.created_at.desc())
             .limit(1)
         )

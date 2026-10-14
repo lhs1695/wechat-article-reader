@@ -594,7 +594,7 @@ def mcp_server(transport: str, port: int):
         status_console = Console(stderr=True)
         status_console.print(f"[bold green]启动 MCP 服务器[/bold green] (transport={transport})")
         status_console.print(
-            "[dim]提供工具: ingest_article, get_cached_article, read_article, summarize_article[/dim]"
+            "[dim]提供工具: ingest_article, get_cached_article, read_article, export_article, summarize_article[/dim]"
         )
 
         if transport == "http":

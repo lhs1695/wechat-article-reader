@@ -99,3 +99,27 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
             return {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()}
         except Exception as exc:
             raise_mcp_error(exc, fallback=("article_read_failed", "读取文章失败"))
+
+    @mcp_instance.tool()
+    @secure_tool
+    async def export_article(
+        article_id: str,
+        path: str,
+        include_images: bool = False,
+    ) -> dict[str, Any]:
+        """将已缓存文章导出为 Markdown 文件。不联网，成功响应仅返回 export_path，不回传正文。
+
+        path 必须是绝对 .md 文件路径，或已存在的目录。include_images 默认 false。
+        """
+        try:
+            if not isinstance(include_images, bool):
+                raise MCPValidationError("include_images must be a boolean")
+            result = await asyncio.to_thread(
+                service().export_markdown,
+                MCPInputValidator.validate_article_id(article_id),
+                path=MCPInputValidator.validate_export_path(path),
+                include_images=include_images,
+            )
+            return {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()}
+        except Exception as exc:
+            raise_mcp_error(exc, fallback=("article_export_failed", "导出文章失败"))

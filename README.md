@@ -18,8 +18,8 @@
 | 谁 | 入口 |
 | --- | --- |
 | 人 | CLI / Web |
-| 能读工作区的本地 Agent | `fetch --no-summary --export markdown`，读 `output/*.md` |
-| 不能读本地文件的 Agent | 四个 MCP 工具（无文件权限时的退路） |
+| 本地 Agent（要整篇 md） | MCP：`ingest_article` → `export_article`（写到绝对路径，不回传正文） |
+| 本地 / 远程 Agent（只要进上下文） | MCP：`read_article` 按页或按节；通读概览用 `summarize_article` |
 
 ## 一次真实的 `read_article` 返回
 
@@ -50,7 +50,8 @@
 | --- | --- | --- |
 | `ingest_article(url, refresh=false, toc_level=2)` | 联网 + 写 SQLite | 唯一抓公众号入口；默认 H2，无 H2 时对齐到最浅标题 |
 | `get_cached_article(article_id, toc_level=2)` | 无 | 再读元数据；ingest 已带目录时可跳过 |
-| `read_article(article_id, cursor=0, max_chars=20000, include_images=false, section=null)` | 无 | 一篇不够长则一次返回；`section`（精确或至少两字唯一前缀）只返回该节，节过长再分页 |
+| `read_article(article_id, cursor=0, max_chars=20000, include_images=false, section=null)` | 无 | 把一页或一节读进模型上下文；不够长则一次返回 |
+| `export_article(article_id, path, include_images=false)` | 写盘 | 已缓存文章导出 Markdown；`path` 为绝对 `.md` 路径或已存在目录；成功体不含正文 |
 | `summarize_article(article_id, max_length=1200)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
 **明确不做**
@@ -63,22 +64,24 @@
 
 图片只在 Markdown 里保留远程 HTTPS 链接和说明文字。三个入口默认都不含图，需要时显式打开：MCP `include_images=true`，CLI `--images`，Web `GET /api/article/markdown?include_images=true`。
 
-阅读时先看这四条，其余在 [用法](docs/用法.md)：
+阅读时先看这几条，其余在 [用法](docs/用法.md)：
 
+- 要整篇 md 落盘：`ingest_article` 之后 `export_article`，不要用 `read_article` 翻页拼接。
 - 不传 `section` 且全文不超过 `max_chars`（默认 20000）就一次返回，不要先翻页。
 - `section` 只返回该节；与 `cursor` 同时出现时在该节内续读。
 - `cursor` 是内容块索引；只保存响应里的 `next_cursor` 做续读。
-- 失败是 MCP **isError**（`code: 说明`），不是 `{success:false}`。四个工具成功体都带 `source_trust: "untrusted_web_content"`。
+- 失败是 MCP **isError**（`code: 说明`），不是 `{success:false}`。五个工具成功体都带 `source_trust: "untrusted_web_content"`。
 
 ## 为什么这么设计
 
-- **四个工具按副作用拆开。** 只有 `ingest_article` 联网写库；读缓存和打模型不混在一次调用里。调用方能从工具名看出这次会不会写库、会不会烧 token；代价是 Agent 必须先 ingest 再 read。
-- **超长文明确失败，不自动 MapReduce。** 超过 `DEEPSEEK__MAX_INPUT_CHARS` 就 `article_too_long`，交给分页阅读。代价是没有一份「看起来完整」的自动摘要，也不服务端偷偷截断再假装读完。
+- **五个工具按副作用拆开。** `ingest_article` 联网写库；`read_article` 只读缓存；`export_article` 只写盘；`summarize_article` 只打模型。代价是 Agent 必须先 ingest 再读或导出。
+- **超长文明确失败，不自动 MapReduce。** 超过 `DEEPSEEK__MAX_INPUT_CHARS` 就 `article_too_long`，交给分页阅读或 `export_article`。代价是没有一份「看起来完整」的自动摘要，也不服务端偷偷截断再假装读完。
 - **三个入口默认不含图。** 装饰图不该占 Agent 上下文；需要时显式打开。代价是默认页只留说明文字，看不到配图。
 - **失败走 MCP isError，而不是 `{success:false}` 假成功体。** 宿主能把失败和正文分开，模型不该在成功通道里解析错误对象。代价是客户端必须按协议处理 isError。
 - **`cursor` 是内容块索引，不是字符偏移。** 只保存响应里的 `next_cursor`。内部 block ID / content hash 不作为对外 API。代价是不能按「从第 N 个字接着读」对接。
 - **CLI / Web / MCP 共用同一套服务与同一份 Markdown 投影。** 一处改分页或无图默认，三个入口一起变。代价是入口层变薄，不能为某个入口偷偷换一套 HTML 解析。
-- **能读工作区的 Agent 应该导出再读文件。** MCP 分页是没有文件权限时的退路。代价是有文件权限时多一步 `fetch --export`，但整篇落盘后不必在工具调用里翻页。
+- **整篇 md 走 `export_article`，分页是读接口。** 本地 Agent 要文件时 MCP 写盘并只返回路径，避免把全文塞进 tool 结果。`read_article` 管进上下文的一页/一节。人用 CLI `fetch --export` 仍然可用。
+- **缓存摘要绑定正文版本。** 刷新文章后，旧正文的摘要不会再显示为当前摘要；需要时重新调用 `summarize_article`。
 
 ## 怎么跑
 
@@ -101,7 +104,9 @@ python -m wechat_article_reader web
 python -m wechat_article_reader mcp-server
 ```
 
-Web 三种启动（都监听 `http://127.0.0.1:8000`）：`python -m wechat_article_reader web`、Windows 双击 `run_web.pyw`（无控制台）或 `run_web.cmd`（有控制台）。MCP 给不能读本地导出文件的 Agent 用；Cursor 默认 **stdio**，也支持本机 Streamable HTTP。CLI 全量命令、Web 页面与 MCP HTTP 鉴权见 [用法](docs/用法.md)。
+Web 三种启动（都监听 `http://127.0.0.1:8000`）：`python -m wechat_article_reader web`、Windows 双击 `run_web.pyw`（无控制台）或 `run_web.cmd`（有控制台）。MCP 给 Agent：整篇 md 用 `export_article`，进上下文用 `read_article`。Cursor 默认 **stdio**，也支持本机 Streamable HTTP。CLI 全量命令、Web 页面与 MCP HTTP 鉴权见 [用法](docs/用法.md)。
+
+远程 MCP HTTP 监听必须显式启用并配置令牌；远程 `export_article` 只能写到配置的导出目录内。普通文章文字会作为 Markdown 字面文本输出，只有真实 HTML 链接会生成 Markdown 链接。
 
 ## 验证与 CI
 

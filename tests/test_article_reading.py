@@ -23,6 +23,15 @@ def _article(html: str, title: str = "阅读测试") -> Article:
     )
 
 
+def test_plain_article_text_cannot_create_markdown_links() -> None:
+    article = _article(
+        '<p>文字 [伪链接](https://example.com) <a href="https://example.org">真实链接</a></p>'
+    )
+    markdown = MarkdownReadingRenderer().render(ArticleReadingProjector().project(article))
+    assert r"\[伪链接\]\(https://example\.com\)" in markdown
+    assert "[真实链接](<https://example.org>)" in markdown
+
+
 class _Storage:
     def __init__(self, article: Article | None = None, *, fail_save: bool = False) -> None:
         self.article = article
@@ -52,6 +61,18 @@ class _Workflow:
     def fetch_article(self, url: str, *, force_refresh: bool = False) -> Article:
         self.calls.append((url, force_refresh))
         return self.article
+
+    def export_existing(
+        self,
+        article: Article,
+        *,
+        target: str,
+        path: str | None = None,
+        include_body: bool = True,
+        include_images: bool | None = None,
+    ) -> str:
+        self.calls.append((str(article.id), target, path, include_body, include_images))
+        return path or "exported.md"
 
 
 def test_projection_preserves_order_structure_and_safe_images() -> None:
@@ -556,3 +577,17 @@ def test_first_page_does_not_repeat_title_when_body_starts_with_same_heading() -
     assert page.content_markdown.startswith("作者：黄迅")
     assert page.content_markdown.count("长文") == 1
     assert "## 长文" in page.content_markdown
+
+
+def test_export_markdown_uses_cached_article_and_path() -> None:
+    article = _article("<p>正文</p>", title="导出稿")
+    workflow = _Workflow(article)
+    service = ArticleReadingService(workflow, _Storage(article))
+
+    result = service.export_markdown(article.id, path="D:/notes/out.md", include_images=False)
+
+    assert result.article_id == str(article.id)
+    assert result.title == "导出稿"
+    assert result.export_path == "D:/notes/out.md"
+    assert result.to_dict().get("content_markdown") is None
+    assert workflow.calls[-1] == (str(article.id), "markdown", "D:/notes/out.md", True, False)

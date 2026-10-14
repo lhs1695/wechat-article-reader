@@ -163,6 +163,7 @@ class WechatHttpxScraper(BaseScraper):
                 timeout=self._timeout,
                 proxy=None,
                 max_redirects=5,
+                allowed_redirect=lambda target: urlsplit(target).hostname == "mp.weixin.qq.com",
                 max_response_bytes=self._max_response_bytes,
                 allowed_content_types={"text/html", "application/xhtml+xml"},
             )

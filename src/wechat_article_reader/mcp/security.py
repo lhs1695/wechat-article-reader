@@ -18,6 +18,7 @@ TOOL_RATE_LIMITS: dict[str, dict[str, float]] = {
     "get_cached_article": {"max_tokens": 200, "refill_rate": 20.0},
     "read_article": {"max_tokens": 200, "refill_rate": 20.0},
     "ingest_article": {"max_tokens": 20, "refill_rate": 2.0},
+    "export_article": {"max_tokens": 50, "refill_rate": 5.0},
     "summarize_article": {"max_tokens": 10, "refill_rate": 1.0},
 }
 

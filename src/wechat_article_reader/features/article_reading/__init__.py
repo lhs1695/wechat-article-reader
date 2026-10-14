@@ -1,6 +1,7 @@
 """Agent-friendly cached Markdown reading feature."""
 
 from .dto import (
+    ArticleExportResult,
     ArticleReadingMetadata,
     ArticleReadingProjection,
     ArticleReadPage,
@@ -21,6 +22,7 @@ from .service import (
 from .summary_renderer import SummarySourceRenderer
 
 __all__ = [
+    "ArticleExportResult",
     "ArticleNotFoundError",
     "ArticlePageSizeError",
     "ArticleReadPage",

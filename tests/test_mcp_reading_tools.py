@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from wechat_article_reader.features.article_reading import (
+    ArticleExportResult,
     ArticlePageSizeError,
     ArticleReadingMetadata,
     ArticleReadPage,
@@ -47,6 +48,7 @@ def test_registers_reading_tools(monkeypatch) -> None:
         "ingest_article",
         "get_cached_article",
         "read_article",
+        "export_article",
     }
 
 
@@ -173,6 +175,7 @@ def test_ingest_article_documents_section_first_reading(monkeypatch) -> None:
     assert documentation is not None
     assert "toc_level" in documentation
     assert "summarize_article" in documentation
+    assert "export_article" in documentation
     assert "start_cursor" in documentation
 
 
@@ -305,3 +308,76 @@ def test_metadata_dto_is_json_ready() -> None:
         sections=(),
     )
     assert metadata.to_dict()["sections"] == []
+
+
+def test_export_article_writes_path_without_body(monkeypatch, tmp_path) -> None:
+    export_path = tmp_path / "article.md"
+    service = Mock()
+    service.export_markdown.return_value = ArticleExportResult(
+        article_id="6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        title="文章",
+        word_count=12,
+        export_path=str(export_path),
+    )
+    registry = _register(monkeypatch, service)
+
+    result = asyncio.run(
+        registry.tools["export_article"](
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            str(export_path),
+        )
+    )
+
+    assert result["success"] is True
+    assert result["source_trust"] == "untrusted_web_content"
+    assert result["export_path"] == str(export_path)
+    assert result["title"] == "文章"
+    assert result["word_count"] == 12
+    assert "content_markdown" not in result
+    service.export_markdown.assert_called_once_with(
+        "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        path=str(export_path.resolve()),
+        include_images=False,
+    )
+
+
+def test_export_article_rejects_relative_path(monkeypatch) -> None:
+    registry = _register(monkeypatch, Mock())
+
+    with pytest.raises(MCPToolError) as err:
+        asyncio.run(
+            registry.tools["export_article"](
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "output/article.md",
+            )
+        )
+
+    assert err.value.code == "invalid_input"
+    assert "absolute" in err.value.message
+
+
+def test_export_article_maps_not_found(monkeypatch, tmp_path) -> None:
+    from wechat_article_reader.features.article_reading import ArticleNotFoundError
+
+    service = Mock()
+    service.export_markdown.side_effect = ArticleNotFoundError("missing")
+    registry = _register(monkeypatch, service)
+
+    with pytest.raises(MCPToolError) as err:
+        asyncio.run(
+            registry.tools["export_article"](
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                str(tmp_path / "missing.md"),
+            )
+        )
+
+    assert err.value.code == "article_not_found"
+
+
+def test_export_article_documents_file_delivery(monkeypatch) -> None:
+    documentation = inspect.getdoc(_register(monkeypatch, Mock()).tools["export_article"])
+
+    assert documentation is not None
+    assert "不联网" in documentation
+    assert "export_path" in documentation
+    assert "不回传正文" in documentation

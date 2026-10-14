@@ -6,13 +6,14 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from .dto import (
+    ArticleExportResult,
     ArticleReadingMetadata,
     ArticleReadPage,
     IngestResult,
     ReadingBlock,
     ReadingSection,
 )
-from .projection import ArticleReadingProjector
+from .projection import ArticleReadingProjector, escape_markdown_text
 from .renderer import MarkdownReadingRenderer
 
 if TYPE_CHECKING:
@@ -48,6 +49,30 @@ class ArticleReadingService:
         self._storage = storage
         self._projector = ArticleReadingProjector()
         self._renderer = MarkdownReadingRenderer()
+
+    def export_markdown(
+        self,
+        article_id: str | UUID,
+        *,
+        path: str,
+        include_images: bool = False,
+    ) -> ArticleExportResult:
+        if not isinstance(include_images, bool):
+            raise ValueError("include_images must be a boolean")
+        article = self._get_article(article_id)
+        export_path = self._workflow.export_existing(
+            article,
+            target="markdown",
+            path=path,
+            include_body=True,
+            include_images=include_images,
+        )
+        return ArticleExportResult(
+            article_id=str(article.id),
+            title=article.title,
+            word_count=article.word_count,
+            export_path=export_path,
+        )
 
     def ingest(
         self,
@@ -341,8 +366,9 @@ def _page_preamble(
             else ""
         )
         if first_heading == title:
-            return f"作者：{author}" if author else ""
-        return f"# {title} · {author}" if author else f"# {title}"
+            return f"作者：{escape_markdown_text(author)}" if author else ""
+        heading = escape_markdown_text(f"{title} · {author}" if author else title)
+        return f"# {heading}"
     if not section_title or section_title == "正文":
         return ""
     first = selected[0] if selected else None
@@ -353,7 +379,7 @@ def _page_preamble(
         if item.title == section_title:
             level = max(1, min(item.level or 2, 6))
             break
-    return f"{'#' * level} {section_title}"
+    return f"{'#' * level} {escape_markdown_text(section_title)}"
 
 
 def _drop_trailing_heading(

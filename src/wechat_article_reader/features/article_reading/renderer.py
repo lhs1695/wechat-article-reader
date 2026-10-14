@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .dto import ArticleReadingProjection, ReadingBlock
+from .projection import escape_markdown_text
 
 
 class MarkdownReadingRenderer:
@@ -37,13 +38,17 @@ class MarkdownReadingRenderer:
         if block.type == "image" and block.url:
             if not include_images:
                 description = block.caption or block.alt
-                return f"*{description}*" if description and description != "图片" else ""
+                return (
+                    f"*{escape_markdown_text(description)}*"
+                    if description and description != "图片"
+                    else ""
+                )
             label = MarkdownReadingRenderer._escape_label(block.alt or block.caption or "图片")
             safe_url = block.url.replace("<", "%3C").replace(">", "%3E")
             title = f' "{block.title.replace(chr(34), chr(39))}"' if block.title else ""
             image = f"![{label}](<{safe_url}>{title})"
             if block.caption and block.caption != label:
-                image += f"\n\n*{block.caption}*"
+                image += f"\n\n*{escape_markdown_text(block.caption)}*"
             return image
         return block.markdown or block.text
 

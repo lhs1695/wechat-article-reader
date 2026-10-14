@@ -83,5 +83,7 @@ class Article:
 
     def update_content(self, content: ArticleContent) -> None:
         """更新文章内容（受控变异）"""
+        if content.text != self.content_text:
+            object.__setattr__(self, "summary", None)
         object.__setattr__(self, "content", content)
         object.__setattr__(self, "updated_at", utc_now())

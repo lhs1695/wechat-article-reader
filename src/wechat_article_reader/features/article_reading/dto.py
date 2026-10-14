@@ -119,3 +119,14 @@ class ArticleReadPage:
             "chars": self.chars if self.chars else len(self.content_markdown),
             "section_end_cursor": self.section_end_cursor,
         }
+
+
+@dataclass(frozen=True)
+class ArticleExportResult:
+    article_id: str
+    title: str
+    word_count: int
+    export_path: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

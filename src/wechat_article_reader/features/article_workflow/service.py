@@ -286,13 +286,20 @@ class ArticleWorkflowService:
         )
 
     def export_existing(
-        self, article: Article, *, target: str, path: str | None = None, include_body: bool = True
+        self,
+        article: Article,
+        *,
+        target: str,
+        path: str | None = None,
+        include_body: bool = True,
+        include_images: bool | None = None,
     ) -> str:
         if self._export_use_case is None:
             raise RuntimeError("导出工作流不可用")
-        return self._export_use_case.execute(
-            article, target=target, path=path, include_body=include_body
-        )
+        options = {"include_body": include_body}
+        if include_images is not None:
+            options["include_images"] = include_images
+        return self._export_use_case.execute(article, target=target, path=path, **options)
 
     def batch_export(
         self,

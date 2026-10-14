@@ -12,6 +12,7 @@ modules instead of being inlined here.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -72,22 +73,38 @@ def _streamable_http_app(mcp_instance: FastMCP) -> Starlette:
     return app
 
 
-def build_http_app(mcp_instance: FastMCP, auth_token: str | None = None) -> Starlette:
+def build_http_app(
+    mcp_instance: FastMCP,
+    auth_token: str | None = None,
+    remote_export_root: str | None = None,
+) -> Starlette:
     """Build the HTTP transport app with optional token authentication."""
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.requests import Request
     from starlette.responses import JSONResponse
 
-    class TokenAuthMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    from .input_validator import export_root_context
+
+    class TokenAuthMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return await self.app(scope, receive, send)
             if auth_token:
-                request_token = request.headers.get("x-mcp-token")
+                headers = dict(scope.get("headers", ()))
+                request_token = headers.get(b"x-mcp-token", b"").decode("utf-8", errors="replace")
                 if request_token != auth_token:
-                    return JSONResponse(
-                        {"success": False, "error": "Unauthorized"},
-                        status_code=401,
+                    response = JSONResponse(
+                        {"success": False, "error": "Unauthorized"}, status_code=401
                     )
-            return await call_next(request)
+                    return await response(scope, receive, send)
+            token = export_root_context.set(
+                None if remote_export_root is None else Path(remote_export_root).resolve()
+            )
+            try:
+                return await self.app(scope, receive, send)
+            finally:
+                export_root_context.reset(token)
 
     inner = _streamable_http_app(mcp_instance)
     inner.add_middleware(TokenAuthMiddleware)
@@ -117,11 +134,18 @@ def run_mcp_server(
         raise InfrastructureError("远程监听已被禁止。若确需远程访问，请显式传入 --allow-remote。")
 
     if is_remote_host:
+        if not auth_token:
+            raise InfrastructureError("远程监听必须配置 MCP 鉴权令牌")
         logger.warning("MCP HTTP 正在远程监听，请确保网络隔离与鉴权配置。")
 
     import uvicorn
 
-    app = build_http_app(mcp_instance, auth_token=auth_token)
+    remote_export_root = None
+    if is_remote_host:
+        from ..infrastructure.config import get_settings
+
+        remote_export_root = str(Path(get_settings().export.default_output_dir).resolve())
+    app = build_http_app(mcp_instance, auth_token=auth_token, remote_export_root=remote_export_root)
     uvicorn.run(app, host=host, port=port)
 
 
