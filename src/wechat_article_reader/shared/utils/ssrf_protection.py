@@ -14,11 +14,17 @@ from __future__ import annotations
 import ipaddress
 import socket
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from loguru import logger
+
+from ..exceptions import OperationCancelledError
+
+
+class CancellationSignal(Protocol):
+    def is_set(self) -> bool: ...
 
 
 class SSRFBlockedError(Exception):
@@ -298,6 +304,7 @@ def _read_sync_response(
     *,
     max_response_bytes: int | None,
     allowed_content_types: set[str] | None,
+    cancel_event: CancellationSignal | None = None,
 ) -> httpx.Response:
     try:
         _check_response_headers(
@@ -308,6 +315,8 @@ def _read_sync_response(
         chunks: list[bytes] = []
         size = 0
         for chunk in response.iter_bytes():
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
             size += len(chunk)
             if max_response_bytes is not None and size > max_response_bytes:
                 raise ResponseTooLargeError("Remote response exceeds the configured limit")
@@ -379,6 +388,7 @@ def safe_fetch_sync(
     method: str = "GET",
     max_redirects: int = 5,
     allowed_redirect: Callable[[str], bool] | None = None,
+    cancel_event: CancellationSignal | None = None,
     **kwargs: Any,
 ) -> httpx.Response:
     request_kwargs = dict(kwargs)
@@ -390,6 +400,8 @@ def safe_fetch_sync(
         current_url = url
         current_method = method
         for redirect_count in range(max_redirects + 1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
             SSRFSafeSyncTransport.validate_url(current_url)
             request = client.build_request(current_method, current_url, **request_kwargs)
             response = client.send(request, stream=True)
@@ -399,6 +411,7 @@ def safe_fetch_sync(
                     response,
                     max_response_bytes=max_response_bytes,
                     allowed_content_types=allowed_content_types,
+                    cancel_event=cancel_event,
                 )
 
             redirect_url = response.headers.get("location")
@@ -407,6 +420,7 @@ def safe_fetch_sync(
                     response,
                     max_response_bytes=max_response_bytes,
                     allowed_content_types=allowed_content_types,
+                    cancel_event=cancel_event,
                 )
             response.close()
             redirect_url = urljoin(current_url, redirect_url)

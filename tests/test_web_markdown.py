@@ -17,7 +17,7 @@ from wechat_article_reader.presentation.web.app import create_app
 def test_article_markdown_endpoint_reuses_reading_service() -> None:
     seen: list[bool] = []
 
-    def read(article_id, cursor, max_chars, include_images=False):
+    def read(article_id, cursor, max_chars, include_images=False, **kwargs):
         seen.append(include_images)
         return SimpleNamespace(
             to_dict=lambda: {

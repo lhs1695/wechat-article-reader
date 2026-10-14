@@ -53,14 +53,18 @@ class _Workflow:
 
 def _pages(service: ArticleReadingService, article_id, *, max_chars: int = 1_000) -> list[str]:
     cursor = 0
+    revision = None
     pages: list[str] = []
     while True:
-        page = service.read(article_id, cursor=cursor, max_chars=max_chars)
+        page = service.read(
+            article_id, cursor=cursor, max_chars=max_chars, expected_revision=revision
+        )
         pages.append(page.content_markdown)
         if not page.has_more:
             return pages
         assert page.next_cursor is not None
         cursor = page.next_cursor
+        revision = page.revision
 
 
 def test_dirty_dom_fixture_keeps_table_code_and_nested_recommend_links() -> None:
@@ -127,7 +131,7 @@ def test_dirty_dom_fixture_uses_same_renderer_for_export_and_read_page(
     assert page.content_markdown.count(_TABLE_LINK) == body.count(_TABLE_LINK)
 
 
-def test_account_footer_wall_is_dropped_in_article_extend_links_stay() -> None:
+def test_account_footer_is_retained_with_content_note() -> None:
     dirty = _article_from_fixture()
     footer_html = _FOOTER_FIXTURE.read_text(encoding="utf-8")
     footer_article = Article(
@@ -145,8 +149,8 @@ def test_account_footer_wall_is_dropped_in_article_extend_links_stay() -> None:
 
     assert _RECOMMEND_ALPHA in dirty_markdown
     assert "这是正文结论，应当保留。" in footer_markdown
-    assert "今日好文推荐" not in footer_markdown
-    assert "推荐文甲" not in footer_markdown
-    assert "活动推销" not in footer_markdown
-    assert "今日好文推荐" not in footer_page.content_markdown
+    assert "今日好文推荐" in footer_markdown
+    assert "推荐文甲" in footer_markdown
+    assert "活动推销" in footer_markdown
+    assert "今日好文推荐" in footer_page.content_markdown
     assert "这是正文结论，应当保留。" in footer_page.content_markdown

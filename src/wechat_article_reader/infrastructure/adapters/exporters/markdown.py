@@ -8,7 +8,7 @@ from loguru import logger
 from ....domain.entities import Article
 from ....features.article_reading import ArticleReadingProjector, MarkdownReadingRenderer
 from ....features.article_reading.projection import escape_markdown_text, markdown_destination
-from ....shared.exceptions import ExporterError
+from ....shared.exceptions import ExporterError, OperationCancelledError
 from .base import BaseExporter
 
 
@@ -68,9 +68,13 @@ class MarkdownExporter(BaseExporter):
 
         # 写入文件
         try:
-            self._atomic_write_text(output_path, md_content)
+            self._atomic_write_text(
+                output_path, md_content, cancel_event=options.get("cancel_event")
+            )
             logger.info(f"Markdown导出成功: {output_path}")
             return str(output_path)
+        except OperationCancelledError:
+            raise
         except Exception as e:
             raise ExporterError(f"Markdown导出失败: {e}") from e
 

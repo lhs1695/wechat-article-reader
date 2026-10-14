@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from ...features.article_reading import ArticlePageSizeError
 from ...shared.exceptions import (
     ArticleNotFoundError,
+    ArticleVersionChangedError,
     ErrorCode,
     InvalidURLError,
     NetworkError,
@@ -21,6 +23,20 @@ from ...shared.exceptions import (
 
 
 def map_exception(exc: Exception, request_id: str) -> tuple[int, dict[str, Any]]:
+    if isinstance(exc, (ArticleVersionChangedError, ArticlePageSizeError, ValueError)):
+        return (
+            409 if isinstance(exc, ArticleVersionChangedError) else 400,
+            {
+                "success": False,
+                "error": str(exc),
+                "error_code": "article_changed"
+                if isinstance(exc, ArticleVersionChangedError)
+                else "page_too_large"
+                if isinstance(exc, ArticlePageSizeError)
+                else "invalid_input",
+                "request_id": request_id,
+            },
+        )
     if isinstance(exc, ScraperTimeoutError):
         status_code = 504
     elif isinstance(exc, ArticleNotFoundError):

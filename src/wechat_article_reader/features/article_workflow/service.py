@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from threading import Event
+from threading import Event, Lock
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -41,6 +41,7 @@ class ArticleWorkflowService:
     ) -> None:
         self._fetch_use_case, self._summarize_use_case = fetch_use_case, summarize_use_case
         self._export_use_case, self._storage = export_use_case, storage
+        self._summary_lock = Lock()
 
     def fetch(self, url: str, content_limit: int | None = 10_000) -> ArticleFetchPayload:
         article = self.fetch_article(url)
@@ -85,6 +86,8 @@ class ArticleWorkflowService:
         tags: list[str] | tuple[str, ...] = (),
         continue_on_summary_error: bool = False,
     ) -> ArticleProcessPayload:
+        from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
+
         if target is not None and self._export_use_case is None:
             raise RuntimeError("导出工作流不可用")
         article = self.fetch_article(url, cancel_event=cancel_event)
@@ -103,16 +106,28 @@ class ArticleWorkflowService:
                     article, max_length=max_length, cancel_event=cancel_event
                 )
                 article.attach_summary(summary)
+            except OperationCancelledError:
+                raise
             except Exception as exc:
                 if not continue_on_summary_error:
                     raise
                 summary_error = str(exc)
         if summary is not None and self._storage is not None:
-            self._storage.save(article)
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+            if not self._storage.save_summary(
+                article.id,
+                article.revision,
+                summary,
+                **({"cancel_event": cancel_event} if cancel_event is not None else {}),
+            ):
+                raise ArticleVersionChangedError()
         export_path = None
         if target is not None:
             assert self._export_use_case is not None
-            export_options: dict[str, bool] = {"include_body": include_body}
+            export_options: dict[str, object] = {"include_body": include_body}
+            if cancel_event is not None:
+                export_options["cancel_event"] = cancel_event
             if include_images is not None:
                 export_options["include_images"] = include_images
             export_path = self._export_use_case.execute(
@@ -145,15 +160,47 @@ class ArticleWorkflowService:
         max_length: int = DEFAULT_SUMMARY_MAX_LENGTH,
         cancel_event: Event | None = None,
     ) -> ArticleSummaryPayload:
-        summary = self._summarize_use_case.execute(
-            article, max_length=max_length, cancel_event=cancel_event
-        )
-        article.attach_summary(summary)
-        if self._storage is not None:
-            self._storage.save(article)
-        return ArticleSummaryPayload(
-            article=self._to_metadata(article), summary=self._to_summary(summary)
-        )
+        from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
+
+        while not self._summary_lock.acquire(timeout=0.1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+        try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+            if self._storage is not None:
+                current = self._storage.get(article.id)
+                if current is not None:
+                    if current.revision != article.revision:
+                        raise ArticleVersionChangedError(current.revision)
+                    article = current
+            profile = self._summarize_use_case.generation_conditions(max_length)
+            if (
+                article.summary is not None
+                and article.summary.input_hash
+                and article.summary.generation == profile
+            ):
+                summary = article.summary
+            else:
+                summary = self._summarize_use_case.execute(
+                    article, max_length=max_length, cancel_event=cancel_event
+                )
+                if cancel_event is not None and cancel_event.is_set():
+                    raise OperationCancelledError()
+                if self._storage is not None and not self._storage.save_summary(
+                    article.id,
+                    article.revision,
+                    summary,
+                    **({"cancel_event": cancel_event} if cancel_event is not None else {}),
+                ):
+                    current = self._storage.get(article.id)
+                    raise ArticleVersionChangedError(current.revision if current else None)
+                article.attach_summary(summary)
+            return ArticleSummaryPayload(
+                article=self._to_metadata(article), summary=self._to_summary(summary)
+            )
+        finally:
+            self._summary_lock.release()
 
     def summarize_cached(
         self,
@@ -293,10 +340,13 @@ class ArticleWorkflowService:
         path: str | None = None,
         include_body: bool = True,
         include_images: bool | None = None,
+        cancel_event: Event | None = None,
     ) -> str:
         if self._export_use_case is None:
             raise RuntimeError("导出工作流不可用")
-        options = {"include_body": include_body}
+        options: dict[str, object] = {"include_body": include_body}
+        if cancel_event is not None:
+            options["cancel_event"] = cancel_event
         if include_images is not None:
             options["include_images"] = include_images
         return self._export_use_case.execute(article, target=target, path=path, **options)
@@ -349,10 +399,16 @@ class ArticleWorkflowService:
             article.account_name,
             article.publish_time_str,
             article.word_count,
+            revision=article.revision,
         )
 
     @staticmethod
     def _to_summary(summary: Summary) -> SummaryPayload:
         return SummaryPayload(
-            summary.overview, summary.key_points, summary.tags, summary.one_sentence
+            summary.overview,
+            summary.key_points,
+            summary.tags,
+            summary.one_sentence,
+            summary.created_at.isoformat(),
+            summary.generation,
         )

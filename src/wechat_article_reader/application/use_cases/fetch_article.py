@@ -74,6 +74,8 @@ class FetchArticleUseCase:
             raise InvalidURLError("不是有效的微信公众号链接")
 
         normalized_url = str(article_url)
+        if cancel_event is not None and cancel_event.is_set():
+            raise OperationCancelledError()
 
         # 缓存命中
         if self._storage is not None and not force_refresh:
@@ -90,7 +92,7 @@ class FetchArticleUseCase:
             for scraper in self._scrapers:
                 if scraper.name == preferred_scraper:
                     article = self._scrape_with(scraper, article_url, cancel_event)
-                    self._save_cache_if_needed(article)
+                    self._save_cache_if_needed(article, cancel_event)
                     return article
             logger.warning(f"未找到指定的抓取器: {preferred_scraper}")
 
@@ -99,7 +101,7 @@ class FetchArticleUseCase:
             if scraper.can_handle(article_url):
                 try:
                     article = self._scrape_with(scraper, article_url, cancel_event)
-                    self._save_cache_if_needed(article)
+                    self._save_cache_if_needed(article, cancel_event)
                     return article
                 except ScraperError as e:
                     last_scraper_error = e
@@ -136,11 +138,17 @@ class FetchArticleUseCase:
             logger.error("抓取失败 error_type={}", type(e).__name__)
             raise ScraperError("抓取失败") from e
 
-    def _save_cache_if_needed(self, article: Article) -> None:
+    def _save_cache_if_needed(self, article: Article, cancel_event: Event | None = None) -> None:
         if self._storage is None:
             return
 
         try:
-            self._storage.save(article)
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+            self._storage.save(
+                article, **({"cancel_event": cancel_event} if cancel_event is not None else {})
+            )
+        except OperationCancelledError:
+            raise
         except Exception as e:
             logger.warning(f"缓存写入失败，忽略: {e}")

@@ -26,9 +26,9 @@ except ImportError:  # pragma: no cover
 
 class _SummaryResponse(BaseModel):
     overview: str = Field(min_length=1, max_length=20_000)
-    key_points: list[str] = Field(default_factory=list, max_length=5)
-    tags: list[str] = Field(default_factory=list, max_length=8)
-    one_sentence: str = Field(default="", max_length=1_000)
+    key_points: list[str] = Field(max_length=5)
+    tags: list[str] = Field(max_length=8)
+    one_sentence: str = Field(max_length=1_000)
 
 
 class DeepSeekSummarizer(BaseSummarizer):
@@ -43,6 +43,7 @@ class DeepSeekSummarizer(BaseSummarizer):
         max_output_tokens: int = 1200,
         reasoning_token_budget: int = 4800,
         max_retries: int = 2,
+        total_timeout: float = 180,
     ) -> None:
         if not _openai_available:
             raise ImportError("OpenAI未安装，请运行: pip install openai")
@@ -50,6 +51,16 @@ class DeepSeekSummarizer(BaseSummarizer):
         self._timeout, self._max_output_tokens = timeout, max_output_tokens
         self._reasoning_token_budget, self._max_retries = reasoning_token_budget, max_retries
         self._client: OpenAI | None = None
+        self._total_timeout = total_timeout
+
+    @property
+    def generation_profile(self) -> dict[str, object]:
+        return {
+            "model": self._model,
+            "max_output_tokens": self._max_output_tokens,
+            "reasoning_token_budget": self._reasoning_token_budget,
+            "temperature": 0.2,
+        }
 
     @property
     def name(self) -> str:
@@ -61,7 +72,7 @@ class DeepSeekSummarizer(BaseSummarizer):
     def _get_client(self) -> OpenAI:
         if self._client is None:
             self._client = OpenAI(
-                api_key=self._api_key, base_url=self._base_url, timeout=self._timeout
+                api_key=self._api_key, base_url=self._base_url, timeout=self._timeout, max_retries=0
             )
         return self._client
 
@@ -77,7 +88,9 @@ class DeepSeekSummarizer(BaseSummarizer):
         if cancel_event is not None and cancel_event.is_set():
             raise OperationCancelledError()
         try:
-            response_text = self._call_api(self._build_prompt(content.text, max_length))
+            response_text = self._call_api(
+                self._build_prompt(content.text, max_length), cancel_event=cancel_event
+            )
         except OperationCancelledError:
             raise
         except SummarizerError:
@@ -92,9 +105,15 @@ class DeepSeekSummarizer(BaseSummarizer):
     def _build_prompt(text: str, max_length: int) -> str:
         return STRUCTURED_SUMMARY_PROMPT_TEMPLATE.format(max_length=max_length, content=text)
 
-    def _call_api(self, prompt: str) -> str:
+    def _call_api(self, prompt: str, *, cancel_event: Event | None = None) -> str:
         client = self._get_client()
+        deadline = time.monotonic() + self._total_timeout
         for attempt in range(self._max_retries + 1):
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SummarizerError("DeepSeek 总耗时超过限制")
             try:
                 response = client.chat.completions.create(
                     model=self._model,
@@ -108,7 +127,14 @@ class DeepSeekSummarizer(BaseSummarizer):
                     temperature=0.2,
                     response_format={"type": "json_object"},
                     max_tokens=self._max_output_tokens + self._reasoning_token_budget,
+                    timeout=min(self._timeout, remaining),
                 )
+                if cancel_event is not None and cancel_event.is_set():
+                    raise OperationCancelledError()
+                if time.monotonic() > deadline:
+                    raise SummarizerError("DeepSeek 总耗时超过限制")
+                if response.choices[0].finish_reason != "stop":
+                    raise SummarizerError("DeepSeek 摘要未正常完成，请调整输出预算后重试")
                 content = response.choices[0].message.content or ""
                 if not content.strip():
                     raise SummarizerError("DeepSeek 未返回 JSON 摘要内容")
@@ -119,8 +145,14 @@ class DeepSeekSummarizer(BaseSummarizer):
                 if attempt >= self._max_retries or not self._is_transient(exc):
                     raise
                 delay = 0.5 * (2**attempt)
+                if time.monotonic() + delay >= deadline:
+                    raise SummarizerError("DeepSeek 总耗时超过限制") from exc
                 logger.warning("DeepSeek transient failure; retrying in {}s", delay)
-                time.sleep(delay)
+                if cancel_event is not None:
+                    if cancel_event.wait(delay):
+                        raise OperationCancelledError() from exc
+                else:
+                    time.sleep(delay)
         raise SummarizerError("DeepSeek 调用失败")  # pragma: no cover
 
     @staticmethod

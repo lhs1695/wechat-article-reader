@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from html import escape
 
 import nh3
+from bs4 import BeautifulSoup
 
 _ALLOWED_TAGS = {
     "a",
+    "b",
+    "i",
+    "s",
     "blockquote",
     "br",
     "code",
@@ -56,12 +61,35 @@ _ALLOWED_ATTRIBUTES = {
 }
 
 
+def preserve_style_semantics(soup: BeautifulSoup) -> None:
+    """Represent known text styles with semantic tags before stripping CSS."""
+    for tag in soup.find_all(style=True):
+        style = str(tag.get("style", "")).lower()
+        wrappers = []
+        weight = re.search(r"font-weight\s*:\s*(bold|[6-9]00)\b", style)
+        if weight and tag.name not in {"strong", "b"}:
+            wrappers.append("strong")
+        if re.search(r"font-style\s*:\s*italic\b", style) and tag.name not in {"em", "i"}:
+            wrappers.append("em")
+        if re.search(r"text-decoration(?:-line)?\s*:[^;]*line-through", style):
+            wrappers.append("del")
+        if re.search(r"text-decoration(?:-line)?\s*:[^;]*underline", style):
+            wrappers.append("u")
+        for name in wrappers:
+            wrapper = soup.new_tag(name)
+            for child in list(tag.contents):
+                wrapper.append(child.extract())
+            tag.append(wrapper)
+
+
 def sanitize_html(value: str) -> str:
     """Return display-safe HTML while retaining common article markup."""
     if not value:
         return ""
+    soup = BeautifulSoup(value, "html.parser")
+    preserve_style_semantics(soup)
     return nh3.clean(
-        value,
+        str(soup),
         tags=_ALLOWED_TAGS,
         attributes=_ALLOWED_ATTRIBUTES,
         clean_content_tags={"iframe", "object", "script", "style", "svg", "template"},

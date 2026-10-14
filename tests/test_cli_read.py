@@ -74,6 +74,8 @@ def test_read_uuid_json_is_machine_readable() -> None:
         max_chars=20_000,
         section="结语",
         include_images=False,
+        expected_revision=None,
+        section_start_cursor=None,
     )
 
 
@@ -103,6 +105,8 @@ def test_read_images_flag_requests_image_markdown() -> None:
         max_chars=20_000,
         section=None,
         include_images=True,
+        expected_revision=None,
+        section_start_cursor=None,
     )
 
 

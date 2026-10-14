@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from ..error_mapping import raise_mcp_error
+from ..execution import run_cancellable
 from ..input_validator import MCPInputValidator, MCPValidationError
 from ..security import secure_tool
 
@@ -35,7 +36,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         try:
             if not isinstance(refresh, bool):
                 raise MCPValidationError("refresh must be a boolean")
-            result = await asyncio.to_thread(
+            result = await run_cancellable(
                 service().ingest,
                 MCPInputValidator.validate_url(url),
                 refresh=refresh,
@@ -70,15 +71,19 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         max_chars: int = DEFAULT_READ_MAX_CHARS,
         include_images: bool = False,
         section: str | None = None,
+        section_start_cursor: int | None = None,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]:
         """读取一页缓存 Markdown。只读本地，不联网。
 
         优先传 section（章节标题：精确匹配，或至少两字的唯一前缀）；只返回该节。
-        与 cursor 同时出现时在该节内续读，cursor 不在节内则从节首开始。
+        父章节包含子章节。同名标题使用目录的 section_start_cursor 选择。
+        与 cursor 同时出现时在该节内续读，cursor 不在节内会明确失败。
         不传 section 时，全文不超过 max_chars 则一次返回。需要续读时把上次响应的
-        next_cursor 原样传入。单个块超过当前 max_chars 但不超过
-        20000 时会整块返回；超过 20000 才返回 page_too_large。
-        include_images=false（默认）排除图片语法、保留说明。
+        next_read 原样传入（含 next_cursor 对应的 cursor 和 expected_revision）。
+        版本变化返回 article_changed，需重新获取目录。单块含文头超过当前 max_chars
+        但不超过 20000 时会整块返回；超过 20000 返回 page_too_large，并提供 export_article 建议。
+        include_images=false（默认）排除图片语法、保留说明；图片数量与未读取状态会明确返回。
         """
         try:
             cursor = MCPInputValidator.validate_int_range(
@@ -89,17 +94,35 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
             )
             if not isinstance(include_images, bool):
                 raise MCPValidationError("include_images must be a boolean")
-            result = await asyncio.to_thread(
+            options: dict[str, Any] = {}
+            if section_start_cursor is not None:
+                options["section_start_cursor"] = MCPInputValidator.validate_int_range(
+                    section_start_cursor,
+                    field_name="section_start_cursor",
+                    lower=0,
+                    upper=2_147_483_647,
+                )
+            if expected_revision is not None:
+                options["expected_revision"] = MCPInputValidator.validate_revision(
+                    expected_revision
+                )
+            result = await run_cancellable(
                 service().read,
                 MCPInputValidator.validate_article_id(article_id),
                 cursor=cursor,
                 max_chars=max_chars,
                 include_images=include_images,
                 section=MCPInputValidator.validate_optional_section(section),
+                **options,
             )
             return {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()}
         except Exception as exc:
-            raise_mcp_error(exc, fallback=("article_read_failed", "读取文章失败"))
+            raise_mcp_error(
+                exc,
+                fallback=("article_read_failed", "读取文章失败"),
+                article_id=article_id,
+                cursor=cursor,
+            )
 
     @mcp_instance.tool()
     @secure_tool
@@ -107,6 +130,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         article_id: str,
         path: str,
         include_images: bool = False,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]:
         """将已缓存文章导出为 Markdown 文件。不联网，成功响应仅返回 export_path，不回传正文。
 
@@ -115,12 +139,19 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         try:
             if not isinstance(include_images, bool):
                 raise MCPValidationError("include_images must be a boolean")
-            result = await asyncio.to_thread(
+            result = await run_cancellable(
                 service().export_markdown,
                 MCPInputValidator.validate_article_id(article_id),
                 path=MCPInputValidator.validate_export_path(path),
                 include_images=include_images,
+                **(
+                    {"expected_revision": MCPInputValidator.validate_revision(expected_revision)}
+                    if expected_revision is not None
+                    else {}
+                ),
             )
             return {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()}
         except Exception as exc:
-            raise_mcp_error(exc, fallback=("article_export_failed", "导出文章失败"))
+            raise_mcp_error(
+                exc, fallback=("article_export_failed", "导出文章失败"), article_id=article_id
+            )

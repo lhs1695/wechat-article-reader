@@ -10,7 +10,7 @@ from pathlib import Path
 from loguru import logger
 
 from ....domain.entities import Article
-from ....shared.exceptions import ExporterError
+from ....shared.exceptions import ExporterError, OperationCancelledError
 from ....shared.utils.html_safety import sanitize_html
 from .base import BaseExporter
 from .markdown import MarkdownExporter
@@ -58,9 +58,13 @@ class HtmlExporter(BaseExporter):
         html_content = self._generate_html(article, **options)
 
         try:
-            self._atomic_write_text(output_path, html_content)
+            self._atomic_write_text(
+                output_path, html_content, cancel_event=options.get("cancel_event")
+            )
             logger.info(f"HTML导出成功: {output_path}")
             return str(output_path)
+        except OperationCancelledError:
+            raise
         except Exception as e:
             raise ExporterError(f"HTML导出失败: {e}") from e
 

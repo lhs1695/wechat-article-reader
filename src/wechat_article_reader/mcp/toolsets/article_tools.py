@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 from ...shared.constants import DEFAULT_SUMMARY_MAX_LENGTH
 from ..error_mapping import raise_mcp_error
+from ..execution import run_cancellable
 from ..input_validator import MCPInputValidator
 from ..security import secure_tool
 
@@ -25,13 +25,13 @@ def register_article_tools(mcp_instance: FastMCP) -> None:
     async def summarize_article(
         article_id: str, max_length: int = DEFAULT_SUMMARY_MAX_LENGTH
     ) -> dict[str, object]:
-        """对已缓存文章调用一次 DeepSeek。会访问 DeepSeek，不抓公众号。
+        """对已缓存文章用 DeepSeek 生成摘要；版本和条件相同则复用摘要。不抓公众号。
 
         需要先 ingest_article。未缓存 → article_not_found；超长 → article_too_long；
         未配置密钥 → summarizer_unavailable。
         """
         try:
-            payload = await asyncio.to_thread(
+            payload = await run_cancellable(
                 service().summarize_cached,
                 MCPInputValidator.validate_article_id(article_id),
                 MCPInputValidator.validate_max_length(max_length),
@@ -43,7 +43,10 @@ def register_article_tools(mcp_instance: FastMCP) -> None:
                 "title": payload.article.title,
                 "author": payload.article.author,
                 "word_count": payload.article.word_count,
+                "revision": payload.article.revision,
                 "summary": payload.summary.to_dict(),
             }
         except Exception as exc:
-            raise_mcp_error(exc, fallback=("article_summary_failed", "文章摘要失败"))
+            raise_mcp_error(
+                exc, fallback=("article_summary_failed", "文章摘要失败"), article_id=article_id
+            )

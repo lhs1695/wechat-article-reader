@@ -45,6 +45,7 @@ class DeepSeekSettings(BaseSettings):
     base_url: str = DEFAULT_DEEPSEEK_BASE_URL
     model: str = DEFAULT_DEEPSEEK_MODEL
     timeout: int = Field(default=60, ge=1)
+    total_timeout: int = Field(default=180, ge=1, le=600)
     max_output_tokens: int = Field(default=1200, ge=128, le=8000)
     reasoning_token_budget: int = Field(default=4800, ge=0, le=16000)
     max_retries: int = Field(default=2, ge=0, le=5)

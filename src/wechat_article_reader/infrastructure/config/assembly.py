@@ -39,6 +39,7 @@ def build_summarizers(
         api_key=api_key,
         model=settings.deepseek.model,
         timeout=settings.deepseek.timeout,
+        total_timeout=settings.deepseek.total_timeout,
         max_output_tokens=settings.deepseek.max_output_tokens,
         reasoning_token_budget=settings.deepseek.reasoning_token_budget,
         max_retries=settings.deepseek.max_retries,

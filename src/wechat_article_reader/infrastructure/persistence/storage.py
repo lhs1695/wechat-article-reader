@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 from uuid import UUID
 
 from sqlalchemy import func, select
 
-from ...domain.entities import Article
-from ...shared.exceptions import StorageError
+from ...domain.entities import Article, Summary
+from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError, StorageError
 from .database import Database
 from .models import ArticleModel, SummaryModel
 from .repository import normalize_article_url
@@ -30,13 +31,36 @@ class SqlAlchemyStorage:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def save(self, article: Article) -> None:
+    def save(self, article: Article, *, cancel_event: Event | None = None) -> None:
         try:
             with self._uow() as uow:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise OperationCancelledError()
                 uow.articles.save(article)
+                if cancel_event is not None and cancel_event.is_set():
+                    raise OperationCancelledError()
                 uow.commit()
+        except (ArticleVersionChangedError, OperationCancelledError):
+            raise
         except Exception as exc:
             raise StorageError(f"保存失败: {exc}") from exc
+
+    def save_summary(
+        self,
+        article_id: UUID,
+        expected_revision: str,
+        summary: Summary,
+        *,
+        cancel_event: Event | None = None,
+    ) -> bool:
+        with self._uow() as uow:
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+            saved = uow.articles.save_summary(article_id, expected_revision, summary)
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+            uow.commit()
+            return saved
 
     def get(self, article_id: UUID) -> Article | None:
         try:

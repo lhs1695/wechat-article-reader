@@ -5,8 +5,10 @@ from abc import ABC, abstractmethod
 from hashlib import sha256
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from threading import Event
 
 from ....domain.entities import Article
+from ....shared.exceptions import OperationCancelledError
 
 
 class BaseExporter(ABC):
@@ -18,10 +20,14 @@ class BaseExporter(ABC):
         return f"{safe_title}-{source_hash}{suffix}"
 
     @staticmethod
-    def _atomic_write_text(output_path: Path, content: str) -> None:
+    def _atomic_write_text(
+        output_path: Path, content: str, *, cancel_event: Event | None = None
+    ) -> None:
         """Write in the target directory, then atomically replace the final file."""
         temporary_path: Path | None = None
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
             with NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -30,9 +36,11 @@ class BaseExporter(ABC):
                 suffix=".tmp",
                 delete=False,
             ) as temporary:
+                temporary_path = Path(temporary.name)
                 temporary.write(content)
                 temporary.flush()
-                temporary_path = Path(temporary.name)
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
             temporary_path.replace(output_path)
         finally:
             if temporary_path is not None and temporary_path.exists():

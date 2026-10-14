@@ -33,6 +33,7 @@ class Article:
 
     # 身份标识
     id: UUID = field(default_factory=uuid4)
+    revision: str = field(default_factory=lambda: str(uuid4()))
     author: str | None = None
     account_name: str | None = None
     publish_time: datetime | None = None
@@ -83,7 +84,7 @@ class Article:
 
     def update_content(self, content: ArticleContent) -> None:
         """更新文章内容（受控变异）"""
-        if content.text != self.content_text:
+        if content != self.content:
             object.__setattr__(self, "summary", None)
         object.__setattr__(self, "content", content)
         object.__setattr__(self, "updated_at", utc_now())

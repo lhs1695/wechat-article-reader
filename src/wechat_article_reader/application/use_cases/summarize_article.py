@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import replace
 from threading import Event
 from typing import TYPE_CHECKING
 
@@ -40,6 +42,14 @@ class SummarizeArticleUseCase:
         """
         self._summarizer = summarizer
         self._max_input_chars = max_input_chars
+
+    def generation_conditions(self, max_length: int) -> dict[str, object]:
+        profile = getattr(self._summarizer, "generation_profile", {})
+        return {
+            "max_length": max_length,
+            "prompt_version": "structured-v2",
+            **(profile if isinstance(profile, dict) else {}),
+        }
 
     def execute(
         self,
@@ -85,7 +95,11 @@ class SummarizeArticleUseCase:
             )
 
             logger.info("摘要生成成功")
-            return summary
+            return replace(
+                summary,
+                input_hash=hashlib.sha256(summary_content.text.encode("utf-8")).hexdigest(),
+                generation=self.generation_conditions(max_length),
+            )
 
         except OperationCancelledError:
             raise

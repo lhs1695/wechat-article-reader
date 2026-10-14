@@ -33,6 +33,7 @@ class ReadingBlock:
     links: tuple[ReadingLink, ...] = ()
     language: str | None = None
     list_marker: str | None = None
+    list_group: str | None = None
     children: tuple[ReadingBlock, ...] = ()
     continues_previous: bool = False
 
@@ -48,9 +49,12 @@ class ReadingSection:
     level: int
     start_cursor: int
     end_cursor: int
+    synthetic: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload.pop("synthetic")
+        return payload
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,7 @@ class ArticleReadingProjection:
     content_hash: str
     blocks: tuple[ReadingBlock, ...]
     sections: tuple[ReadingSection, ...]
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,8 @@ class IngestResult:
     cached: bool
     sections: tuple[ReadingSection, ...] = ()
     block_count: int = 0
+    revision: str = ""
+    content_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -90,6 +97,11 @@ class ArticleReadingMetadata:
     fetched_at: str | None
     sections: tuple[ReadingSection, ...]
     block_count: int = 0
+    revision: str = ""
+    first_cached_at: str | None = None
+    summary_generated_at: str | None = None
+    summary_generation: dict[str, object] | None = None
+    content_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -109,6 +121,15 @@ class ArticleReadPage:
     section_title: str | None = None
     chars: int = 0
     section_end_cursor: int | None = None
+    revision: str = ""
+    sections_in_page: tuple[ReadingSection, ...] = ()
+    image_count: int = 0
+    omitted_images: int = 0
+    image_content_read: bool = False
+    content_notes: tuple[str, ...] = ()
+    next_read: dict[str, object] | None = None
+    reading_scope: str = "article"
+    end_of_article: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +143,15 @@ class ArticleReadPage:
             "section_title": self.section_title,
             "chars": self.chars if self.chars else len(self.content_markdown),
             "section_end_cursor": self.section_end_cursor,
+            "revision": self.revision,
+            "sections_in_page": [section.to_dict() for section in self.sections_in_page],
+            "image_count": self.image_count,
+            "omitted_images": self.omitted_images,
+            "image_content_read": self.image_content_read,
+            "content_notes": list(self.content_notes),
+            "next_read": self.next_read,
+            "reading_scope": self.reading_scope,
+            "end_of_article": self.end_of_article,
         }
 
 
@@ -131,6 +161,7 @@ class ArticleExportResult:
     title: str
     word_count: int
     export_path: str
+    revision: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

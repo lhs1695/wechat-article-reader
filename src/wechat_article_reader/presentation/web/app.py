@@ -62,7 +62,8 @@ def create_app(
     prewarm: bool = True,
 ) -> FastAPI:
     error_responses = {
-        status_code: {"model": ErrorResponse} for status_code in (400, 404, 422, 500, 502, 503, 504)
+        status_code: {"model": ErrorResponse}
+        for status_code in (400, 404, 409, 422, 500, 502, 503, 504)
     }
     app = FastAPI(
         title="WeChat Article Reader",

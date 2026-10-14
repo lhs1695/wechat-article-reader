@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from wechat_article_reader.application.use_cases.summarize_article import Summar
 from wechat_article_reader.domain.value_objects import ArticleContent
 from wechat_article_reader.infrastructure.adapters.summarizers.deepseek import DeepSeekSummarizer
 from wechat_article_reader.shared.exceptions import (
+    OperationCancelledError,
     SummarizerError,
     SummarizerNotAvailableError,
     SummarizerTokenLimitError,
@@ -15,14 +17,80 @@ from wechat_article_reader.shared.exceptions import (
 )
 
 
+def test_sdk_retry_is_disabled(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "wechat_article_reader.infrastructure.adapters.summarizers.deepseek.OpenAI",
+        lambda **kwargs: calls.append(kwargs) or SimpleNamespace(),
+    )
+    DeepSeekSummarizer("key")._get_client()
+    assert calls[0]["max_retries"] == 0
+
+
+@pytest.mark.parametrize("reason", ["length", "content_filter", None])
+def test_noncompleted_generation_is_rejected(reason):
+    adapter = DeepSeekSummarizer("key")
+    response = SimpleNamespace(choices=[SimpleNamespace(finish_reason=reason)])
+    adapter._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_: response))
+    )
+    with pytest.raises(SummarizerError, match="未正常完成"):
+        adapter._call_api("prompt")
+
+
+def test_missing_structured_fields_are_rejected():
+    with pytest.raises(SummarizerError):
+        DeepSeekSummarizer("key")._parse_response('{"overview":"partial"}', 500)
+
+
+def test_cancelled_retry_does_not_call_model_again():
+    signal, calls = Event(), []
+
+    class TransientError(Exception):
+        status_code = 429
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        signal.set()
+        raise TransientError()
+
+    adapter = DeepSeekSummarizer("key")
+    adapter._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    with pytest.raises(OperationCancelledError):
+        adapter._call_api("prompt", cancel_event=signal)
+    assert len(calls) == 1
+
+
+def test_total_budget_caps_request_timeout_and_prevents_retry():
+    calls = []
+
+    class TransientError(Exception):
+        status_code = 429
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        raise TransientError()
+
+    adapter = DeepSeekSummarizer("key", total_timeout=0.2)
+    adapter._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    with pytest.raises(SummarizerError, match="总耗时"):
+        adapter._call_api("prompt")
+    assert len(calls) == 1 and 0 < calls[0]["timeout"] <= 0.200001
+
+
 def test_deepseek_returns_only_compact_summary_shape() -> None:
     summarizer = DeepSeekSummarizer("key", max_output_tokens=321)
     response = SimpleNamespace(
         choices=[
             SimpleNamespace(
+                finish_reason="stop",
                 message=SimpleNamespace(
                     content='{"overview":"内容","key_points":["要点"],"tags":["AI"],"one_sentence":"一句话"}'
-                )
+                ),
             )
         ]
     )
@@ -43,7 +111,7 @@ def test_deepseek_rejects_non_json_response() -> None:
 
 def test_deepseek_shortens_overview_at_sentence_boundary() -> None:
     summary = DeepSeekSummarizer("key")._parse_response(
-        '{"overview":"第一句完整。第二句仍在继续"}', 7
+        '{"overview":"第一句完整。第二句仍在继续","key_points":[],"tags":[],"one_sentence":""}', 7
     )
 
     assert summary.overview == "第一句完整。\n\n> 内容已按长度限制收缩。"
@@ -57,7 +125,11 @@ def test_deepseek_retries_transient_error(monkeypatch) -> None:
         status_code = 429
 
     response = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content='{"overview":"内容"}'))]
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content='{"overview":"内容"}')
+            )
+        ]
     )
 
     def create(**_):

@@ -7,6 +7,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ..shared.utils.article_identity import normalize_section_title
+
 
 class MCPValidationError(Exception):
     """MCP 输入验证异常"""
@@ -39,7 +41,7 @@ class MCPInputValidator:
         if not parsed.hostname:
             raise MCPValidationError("URL missing hostname")
         hostname = parsed.hostname.casefold()
-        if hostname != "mp.weixin.qq.com" and not hostname.endswith(".mp.weixin.qq.com"):
+        if hostname != "mp.weixin.qq.com":
             raise MCPValidationError("Only WeChat article URLs are supported")
 
         netloc = parsed.netloc
@@ -49,13 +51,6 @@ class MCPInputValidator:
             raise MCPValidationError("Invalid whitespace in URL hostname")
         if any(ch in set("\"'<>\\^") for ch in netloc):
             raise MCPValidationError("Invalid character in URL hostname")
-
-        from ..shared.utils.ssrf_protection import SSRFBlockedError, SSRFSafeTransport
-
-        try:
-            SSRFSafeTransport.validate_url(url)
-        except SSRFBlockedError as e:
-            raise MCPValidationError(f"URL blocked by SSRF protection: {e}") from e
 
         return url
 
@@ -101,7 +96,7 @@ class MCPInputValidator:
 
     @classmethod
     def validate_max_length(cls, value: int, lower: int = 50, upper: int = 10_000) -> int:
-        if not isinstance(value, int) or value < lower or value > upper:
+        if type(value) is not int or value < lower or value > upper:
             raise MCPValidationError(
                 f"max_length must be integer in [{lower}, {upper}], got {value}"
             )
@@ -116,7 +111,7 @@ class MCPInputValidator:
         lower: int,
         upper: int,
     ) -> int:
-        if not isinstance(value, int):
+        if type(value) is not int:
             raise MCPValidationError(f"{field_name} must be an integer")
         if value < lower or value > upper:
             raise MCPValidationError(f"{field_name} must be in [{lower}, {upper}]")
@@ -132,5 +127,13 @@ class MCPInputValidator:
             return None
         if not isinstance(value, str):
             raise MCPValidationError("section must be a string")
-        text = cls.sanitize_text(value, 200).strip()
+        if len(value) > 20_000:
+            raise MCPValidationError("章节标题过长，请使用目录的 section_start_cursor")
+        text = normalize_section_title(value)
         return text or None
+
+    @classmethod
+    def validate_revision(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return cls.validate_article_id(value)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 
@@ -75,6 +75,7 @@ def test_read_article_defaults_to_markdown_without_blocks(monkeypatch) -> None:
         max_chars=20_000,
         include_images=False,
         section=None,
+        cancel_event=ANY,
     )
 
 
@@ -100,6 +101,7 @@ def test_read_article_can_exclude_images(monkeypatch) -> None:
         max_chars=20_000,
         include_images=False,
         section=None,
+        cancel_event=ANY,
     )
 
 
@@ -194,7 +196,10 @@ def test_ingest_passes_toc_level(monkeypatch) -> None:
     asyncio.run(registry.tools["ingest_article"]("https://mp.weixin.qq.com/s/test", toc_level=3))
 
     service.ingest.assert_called_once_with(
-        "https://mp.weixin.qq.com/s/test", refresh=False, toc_level=3
+        "https://mp.weixin.qq.com/s/test",
+        refresh=False,
+        toc_level=3,
+        cancel_event=ANY,
     )
 
 
@@ -222,6 +227,7 @@ def test_read_article_passes_section(monkeypatch) -> None:
         max_chars=20_000,
         include_images=False,
         section="结语",
+        cancel_event=ANY,
     )
 
 
@@ -338,6 +344,7 @@ def test_export_article_writes_path_without_body(monkeypatch, tmp_path) -> None:
         "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
         path=str(export_path.resolve()),
         include_images=False,
+        cancel_event=ANY,
     )
 
 

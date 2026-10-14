@@ -17,6 +17,8 @@ class Summary:
     tags: tuple[str, ...] = field(default_factory=tuple)
     one_sentence: str = ""
     created_at: datetime = field(default_factory=utc_now)
+    input_hash: str = ""
+    generation: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "key_points", tuple(str(point) for point in self.key_points))

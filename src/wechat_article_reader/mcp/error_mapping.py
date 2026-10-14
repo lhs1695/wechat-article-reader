@@ -12,7 +12,9 @@ from ..features.article_reading import (
 from ..features.article_reading import ArticlePageSizeError, ArticleStorageError
 from ..shared.exceptions import (
     ArticleNotFoundError,
+    ArticleVersionChangedError,
     InvalidURLError,
+    OperationCancelledError,
     ScraperBlockedError,
     ScraperError,
     ScraperRateLimitedError,
@@ -29,10 +31,24 @@ def raise_mcp_error(
     exc: Exception,
     *,
     fallback: tuple[str, str] | None = None,
+    article_id: str | None = None,
+    cursor: int | None = None,
 ) -> NoReturn:
     """Raise MCPToolError so the MCP client sees isError instead of a fake success."""
     if isinstance(exc, MCPToolError):
         raise exc
+    if isinstance(exc, OperationCancelledError):
+        raise MCPToolError("operation_cancelled", "操作已取消，未提交后续写入") from exc
+    if isinstance(exc, ArticleVersionChangedError):
+        raise MCPToolError(
+            "article_changed",
+            str(exc),
+            {
+                "tool": "get_cached_article",
+                "arguments": {"article_id": article_id},
+                "current_revision": exc.current_revision,
+            },
+        ) from exc
     if isinstance(exc, MCPValidationError):
         raise MCPToolError("invalid_input", str(exc) or "输入参数无效") from exc
     if isinstance(exc, InvalidURLError):
@@ -52,11 +68,17 @@ def raise_mcp_error(
     if isinstance(exc, ArticleStorageError):
         raise MCPToolError("article_storage_failed", "文章持久化失败") from exc
     if isinstance(exc, ArticlePageSizeError):
-        raise MCPToolError("page_too_large", str(exc)) from exc
+        raise MCPToolError(
+            "page_too_large", str(exc), _export_recovery(article_id, cursor)
+        ) from exc
     if isinstance(exc, SummarizerNotAvailableError):
         raise MCPToolError("summarizer_unavailable", "DeepSeek 摘要器不可用") from exc
     if isinstance(exc, SummarizerTokenLimitError):
-        raise MCPToolError("article_too_long", "文章过长，请使用分页 Markdown 阅读") from exc
+        raise MCPToolError(
+            "article_too_long",
+            "文章过长，请分页阅读或导出完整文件",
+            _export_recovery(article_id, cursor),
+        ) from exc
     if isinstance(exc, UseCaseError):
         code, message = fallback or ("article_summary_failed", "文章摘要失败")
         raise MCPToolError(code, message) from exc
@@ -65,3 +87,24 @@ def raise_mcp_error(
         raise MCPToolError(fallback[0], fallback[1]) from exc
     logger.exception("MCP 工具未处理异常")
     raise MCPToolError("tool_failed", "工具执行失败") from exc
+
+
+def _export_recovery(article_id: str | None, cursor: int | None) -> dict[str, object]:
+    from pathlib import Path
+    from uuid import UUID
+
+    from ..infrastructure.config import get_settings
+    from .input_validator import export_root_context
+
+    arguments: dict[str, object] = {}
+    if article_id is not None:
+        try:
+            normalized = str(UUID(article_id))
+            root = (
+                export_root_context.get()
+                or Path(get_settings().export.default_output_dir).resolve()
+            )
+            arguments = {"article_id": normalized, "path": str(root / f"{normalized}.md")}
+        except ValueError:
+            arguments = {"article_id": article_id}
+    return {"tool": "export_article", "arguments": arguments, "blocked_cursor": cursor}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,7 @@ class ArticleMetadataPayload:
     account_name: str | None
     publish_time: str
     word_count: int
+    revision: str = field(default="", kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class SummaryPayload:
     key_points: tuple[str, ...]
     tags: tuple[str, ...]
     one_sentence: str = ""
+    generated_at: str | None = None
+    generation: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -40,6 +43,8 @@ class SummaryPayload:
             "key_points": list(self.key_points),
             "tags": list(self.tags),
             "one_sentence": self.one_sentence,
+            "generated_at": self.generated_at,
+            "generation": self.generation,
         }
 
 

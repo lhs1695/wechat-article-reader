@@ -26,6 +26,7 @@ class ArticleModel(Base):
     content_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     images_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[str] = mapped_column(String(36), nullable=False)
     source_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
@@ -48,6 +49,8 @@ class SummaryModel(Base):
     key_points_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     one_sentence: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    generation_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
     __table_args__ = (

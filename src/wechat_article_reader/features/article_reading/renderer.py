@@ -20,14 +20,22 @@ class MarkdownReadingRenderer:
     ) -> str:
         blocks = value.blocks if isinstance(value, ArticleReadingProjection) else tuple(value)
         parts: list[str] = []
+        previous: ReadingBlock | None = None
         for block in blocks:
             part = self.render_block(block, include_images=include_images)
             if not part:
                 continue
+            if (
+                previous
+                and previous.type == block.type == "list_item"
+                and previous.list_group != block.list_group
+            ):
+                parts.append("<!-- list boundary -->")
             if block.continues_previous and parts and block.type == "paragraph":
                 parts[-1] += part
             else:
                 parts.append(part)
+            previous = block
         return "\n\n".join(parts).strip()
 
     @staticmethod

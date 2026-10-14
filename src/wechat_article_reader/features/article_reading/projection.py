@@ -8,11 +8,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from html import escape
 from typing import Any, cast
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 from ...domain.entities import Article
+from ...shared.utils.article_identity import normalize_section_title
+from ...shared.utils.html_safety import preserve_style_semantics
 from .dto import ArticleReadingProjection, ReadingBlock, ReadingLink, ReadingSection
 
 _CONTAINER_TAGS = {"article", "div", "main", "section"}
@@ -24,8 +26,7 @@ _ACCOUNT_FOOTER_MARKERS = frozenset({"今日好文推荐", "猜你喜欢"})
 def content_digest(content_html: str, fallback_text: str = "") -> str:
     """Hash the delivery-relevant source, not just its extracted text."""
     source = content_html or fallback_text
-    normalized = "\n".join(line.strip() for line in source.splitlines() if line.strip())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
 def _clean_text(value: str) -> str:
@@ -36,7 +37,7 @@ def _clean_text(value: str) -> str:
 def escape_markdown_text(value: str) -> str:
     """Keep source text literal; only real HTML links become Markdown links."""
     value = re.sub(r"&(?=(?:#\w+|[A-Za-z][A-Za-z0-9]+);)", "&amp;", value)
-    value = re.sub(r"([\\`*_\[\]<>])", r"\\\1", value)
+    value = re.sub(r"([\\`*_~\[\]<>])", r"\\\1", value)
     return re.sub(
         r"(?m)^(\s*)(#{1,6}(?=\s)|[-+](?=\s)|\d+[.)](?=\s)|-{3,}|~{3,}|={3,})",
         lambda match: (
@@ -53,6 +54,20 @@ def _split_text(value: str, limit: int = _MAX_BLOCK_CHARS) -> list[str]:
     start = 0
     while start < len(value):
         end = min(start + limit, len(value))
+        if end < len(value):
+            boundary = max(
+                value.rfind(mark, start + limit // 2, end)
+                for mark in (" ", "\n", "。", "！", "？", "；")
+            )
+            if boundary >= 0:
+                end = boundary + 1
+            elif value[end - 1].isascii() and value[end - 1].isalnum():
+                word = re.search(r"[A-Za-z0-9_]+$", value[start:end])
+                if word and word.start() > 0:
+                    end = start + word.start()
+                elif word:
+                    suffix = re.match(r"[A-Za-z0-9_]*", value[end:])
+                    end += suffix.end() if suffix else 0
         ampersand = value.rfind("&", start, end)
         if ampersand >= 0:
             entity = re.match(r"&(?:#\w+|[A-Za-z][A-Za-z0-9]+);", value[ampersand:])
@@ -67,15 +82,25 @@ def _safe_image_url(value: object) -> str | None:
     if isinstance(value, list):
         value = value[0] if value else ""
     candidate = str(value or "").strip()
-    parsed = urlsplit(candidate)
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return None
     return candidate if parsed.scheme == "https" and parsed.netloc else None
 
 
-def _safe_link_url(value: object) -> str | None:
+def _safe_link_url(value: object, base_url: str | None = None) -> str | None:
     if isinstance(value, list):
         value = value[0] if value else ""
     candidate = str(value or "").strip()
-    parsed = urlsplit(candidate)
+    if not candidate:
+        return None
+    try:
+        if base_url:
+            candidate = urljoin(base_url, candidate)
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return None
     if parsed.scheme in {"http", "https"} and parsed.netloc:
         return candidate
     if parsed.scheme == "mailto" and parsed.path:
@@ -97,6 +122,7 @@ class _InlineSegment:
     markdown: str
     link: ReadingLink | None = None
     atomic: bool = False
+    image: Tag | None = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +142,7 @@ class _InlineContent:
         return tuple(segment.link for segment in self.segments if segment.link is not None)
 
 
-def _table_content(table: Tag) -> _InlineContent:
+def _table_content(table: Tag, base_url: str | None = None) -> _InlineContent:
     text_rows: list[list[str]] = []
     markdown_rows: list[list[str]] = []
     links: list[ReadingLink] = []
@@ -130,7 +156,7 @@ def _table_content(table: Tag) -> _InlineContent:
         text_cells: list[str] = []
         markdown_cells: list[str] = []
         for cell in row.find_all(["th", "td"], recursive=False):
-            content = _inline_content(cell)
+            content = _inline_content(cell, base_url=base_url)
             text_cells.append(content.text.replace("|", "\\|").replace("\n", " / "))
             markdown_cells.append(
                 content.markdown.replace("|", "\\|").replace("  \n", "<br>").replace("\n", "<br>")
@@ -140,7 +166,7 @@ def _table_content(table: Tag) -> _InlineContent:
             text_rows.append(text_cells)
             markdown_rows.append(markdown_cells)
     if not text_rows:
-        content = _inline_content(table)
+        content = _inline_content(table, base_url=base_url)
         return content
     width = max(len(row) for row in text_rows)
     text_rows = [row + [""] * (width - len(row)) for row in text_rows]
@@ -160,7 +186,14 @@ def _table_content(table: Tag) -> _InlineContent:
     if complex_table:
         from ...shared.utils.html_safety import sanitize_html
 
-        markdown = sanitize_html(str(table))
+        safe_table = BeautifulSoup(sanitize_html(str(table)), "html.parser")
+        for anchor in safe_table.find_all("a"):
+            url = _safe_link_url(anchor.get("href"), base_url)
+            if url:
+                anchor["href"] = url
+            elif anchor.has_attr("href"):
+                del anchor["href"]
+        markdown = str(safe_table)
     return _InlineContent(
         (
             _InlineSegment(render(text_rows), markdown, atomic=True),
@@ -213,10 +246,12 @@ def _code_text(node: Tag) -> str:
                 parts.append(_code_text(child))
                 if child.name in {"div", "p"} and not parts[-1].endswith("\n"):
                     parts.append("\n")
-    return "".join(parts).replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+    return "".join(parts).replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _inline_content(node: Tag, *, include_self: bool = False) -> _InlineContent:
+def _inline_content(
+    node: Tag, *, include_self: bool = False, base_url: str | None = None
+) -> _InlineContent:
     """Return plain text, Markdown text, and safe links in source order."""
 
     segments: list[_InlineSegment] = []
@@ -229,6 +264,9 @@ def _inline_content(node: Tag, *, include_self: bool = False) -> _InlineContent:
             segments.append(_InlineSegment(text, escape_markdown_text(text)))
             return
         if not isinstance(current, Tag):
+            return
+        if current.name == "img":
+            segments.append(_InlineSegment("", "", atomic=True, image=current))
             return
         if current.name == "br":
             segments.append(_InlineSegment("\n", "  \n", atomic=True))
@@ -247,12 +285,14 @@ def _inline_content(node: Tag, *, include_self: bool = False) -> _InlineContent:
                 _InlineSegment(text, f"{fence}{padding}{text}{padding}{fence}", atomic=True)
             )
             return
-        if current.name in {"strong", "b", "em", "i", "del", "sub", "sup"}:
-            content = _inline_content(current)
+        if current.name in {"strong", "b", "em", "i", "del", "s", "u", "sub", "sup"}:
+            content = _inline_content(current, base_url=base_url)
             text = "".join(segment.text for segment in content.segments)
             raw_markdown = "".join(segment.markdown for segment in content.segments)
             markdown = raw_markdown.strip()
-            marker = {"strong": "**", "b": "**", "em": "*", "i": "*", "del": "~~"}.get(current.name)
+            marker = {"strong": "**", "b": "**", "em": "*", "i": "*", "del": "~~", "s": "~~"}.get(
+                current.name
+            )
             if marker:
                 leading = raw_markdown[: len(raw_markdown) - len(raw_markdown.lstrip())]
                 trailing = raw_markdown[len(raw_markdown.rstrip()) :]
@@ -261,12 +301,26 @@ def _inline_content(node: Tag, *, include_self: bool = False) -> _InlineContent:
                 )
             else:
                 markdown = f"<{current.name}>{escape(text)}</{current.name}>"
-            segments.append(_InlineSegment(text, markdown, atomic=True))
+            if any(segment.image is not None for segment in content.segments):
+                for segment in content.segments:
+                    if segment.image is not None:
+                        segments.append(segment)
+                    elif segment.text:
+                        rendered = (
+                            f"{marker}{segment.markdown.strip()}{marker}"
+                            if marker
+                            else segment.markdown
+                        )
+                        segments.append(
+                            _InlineSegment(segment.text, rendered, segment.link, atomic=True)
+                        )
+            else:
+                segments.append(_InlineSegment(text, markdown, atomic=True))
             segments.extend(_InlineSegment("", "", link) for link in content.links)
             return
         if current.name == "a":
             label = _clean_text(current.get_text(" ", strip=True))
-            url = _safe_link_url(current.get("href"))
+            url = _safe_link_url(current.get("href"), base_url)
             if label and url:
                 link = ReadingLink(label, url, _attribute(current, "title"))
                 segments.append(_InlineSegment(label, _markdown_link(link), link))
@@ -283,20 +337,39 @@ def _inline_content(node: Tag, *, include_self: bool = False) -> _InlineContent:
         for child in node.children:
             if isinstance(child, (Tag, NavigableString)):
                 walk(child)
-    return _InlineContent(tuple(segments))
+    merged: list[_InlineSegment] = []
+    for segment in segments:
+        if (
+            merged
+            and not segment.atomic
+            and segment.link is None
+            and not merged[-1].atomic
+            and merged[-1].link is None
+        ):
+            text = merged[-1].text + segment.text
+            merged[-1] = _InlineSegment(text, escape_markdown_text(text))
+        else:
+            merged.append(segment)
+    return _InlineContent(tuple(merged))
 
 
 class ArticleReadingProjector:
     """Convert an article into ordered blocks without persisting derived data."""
 
+    def __init__(self, base_url: str | None = None):
+        self._base_url = base_url
+
     def project(self, article: Article) -> ArticleReadingProjection:
+        return ArticleReadingProjector(str(article.url))._project(article)
+
+    def _project(self, article: Article) -> ArticleReadingProjection:
         digest = content_digest(article.content_html, article.content_text)
         drafts: list[dict[str, object]] = []
         if article.content_html:
             soup = BeautifulSoup(article.content_html, "html.parser")
+            preserve_style_semantics(soup)
             root = soup.body or soup
             self._walk(root, drafts)
-            drafts = self._drop_trailing_account_footer(drafts)
         if not drafts:
             for paragraph in re.split(r"\n\s*\n|\n", article.content_text):
                 self._append_text(drafts, "paragraph", paragraph)
@@ -316,6 +389,7 @@ class ArticleReadingProjector:
                 links=cast(tuple[ReadingLink, ...], draft.get("links", ())),
                 language=cast(str | None, draft.get("language")),
                 list_marker=cast(str | None, draft.get("list_marker")),
+                list_group=cast(str | None, draft.get("list_group")),
                 children=cast(tuple[ReadingBlock, ...], draft.get("children", ())),
                 continues_previous=bool(draft.get("continues_previous", False)),
             )
@@ -326,6 +400,9 @@ class ArticleReadingProjector:
             content_hash=digest,
             blocks=blocks,
             sections=self._sections(blocks),
+            notes=("文末可能包含推荐内容，已按原文保留",)
+            if any(block.text in _ACCOUNT_FOOTER_MARKERS for block in blocks)
+            else (),
         )
 
     def _walk(self, node: Tag, drafts: list[dict[str, object]]) -> None:
@@ -361,7 +438,9 @@ class ArticleReadingProjector:
                 in {"span", "strong", "em", "b", "i", "del", "a", "code", "sub", "sup", "br", "u"}
                 and child.find(["p", "pre", "ul", "ol", "table", "section", "div"]) is None
             ):
-                pending.extend(_inline_content(child, include_self=True).segments)
+                pending.extend(
+                    _inline_content(child, include_self=True, base_url=self._base_url).segments
+                )
                 continue
             flush_inline()
             if name == "img":
@@ -371,6 +450,7 @@ class ArticleReadingProjector:
                 drafts.append({"type": "rule", "text": "", "markdown": "---"})
                 continue
             if name in {"ul", "ol"}:
+                group = f"list-{len(drafts)}"
                 try:
                     start = int(str(child.get("start", "1")))
                 except ValueError:
@@ -378,6 +458,7 @@ class ArticleReadingProjector:
                 for offset, item in enumerate(child.find_all("li", recursive=False)):
                     marker = f"{max(0, start + offset)}." if name == "ol" else "-"
                     self._append_container(drafts, "list_item", item, marker=marker)
+                    drafts[-1]["list_group"] = group
                 continue
             if name in {"li", "blockquote"}:
                 self._append_container(
@@ -411,21 +492,21 @@ class ArticleReadingProjector:
                 self._append_inline(
                     drafts,
                     "heading",
-                    _inline_content(child),
+                    _inline_content(child, base_url=self._base_url),
                     level=int(name[1]),
                 )
                 continue
             if name == "table":
-                content = _table_content(child)
+                content = _table_content(child, self._base_url)
                 self._append_inline(drafts, "table", content)
                 if not content.markdown.lstrip().startswith("<table"):
                     for image in child.find_all("img"):
                         self._append_image(drafts, image)
                 continue
             if name == "p":
-                self._append_inline(drafts, "paragraph", _inline_content(child))
-                for image in child.find_all("img"):
-                    self._append_image(drafts, image)
+                self._append_inline(
+                    drafts, "paragraph", _inline_content(child, base_url=self._base_url)
+                )
                 continue
             if name in {"figcaption"}:
                 continue
@@ -450,7 +531,11 @@ class ArticleReadingProjector:
             # standalone ``span`` elements rather than paragraphs.  Treat every
             # remaining leaf as inline content so a safe nested ``<a>`` keeps
             # both its Markdown target and structured link metadata.
-            self._append_inline(drafts, "paragraph", _inline_content(child, include_self=True))
+            self._append_inline(
+                drafts,
+                "paragraph",
+                _inline_content(child, include_self=True, base_url=self._base_url),
+            )
         flush_inline()
 
     def _append_container(
@@ -483,7 +568,7 @@ class ArticleReadingProjector:
             )
             is None
         ):
-            self._append_inline(nested, "paragraph", _inline_content(node))
+            self._append_inline(nested, "paragraph", _inline_content(node, base_url=self._base_url))
         else:
             self._walk(node, nested)
         children = tuple(
@@ -520,6 +605,22 @@ class ArticleReadingProjector:
                 return
             text = _clean_text("".join(segment.text for segment in current))
             markdown = "".join(segment.markdown for segment in current)
+            if block_type == "heading":
+                text = normalize_section_title(text)
+            if block_type == "paragraph":
+                # Guard line prefixes after assembling DOM fragments.
+                markdown = re.sub(
+                    r"(?m)^(\s*)(#{1,6}(?=\s)|[-+](?=\s)|\d+[.)](?=\s)|-{3,}|~{3,}|={3,})",
+                    lambda match: (
+                        match[1]
+                        + (
+                            match[2][:-1] + "\\" + match[2][-1]
+                            if match[2][0].isdigit()
+                            else "\\" + match[2]
+                        )
+                    ),
+                    markdown,
+                )
             if text or markdown:
                 draft: dict[str, object] = {"type": block_type, "text": text, "markdown": markdown}
                 draft["continues_previous"] = continuing
@@ -534,7 +635,17 @@ class ArticleReadingProjector:
             current_length = 0
 
         for segment in content.segments:
-            if segment.atomic or segment.link is not None or len(segment.text) <= _MAX_BLOCK_CHARS:
+            if segment.image is not None:
+                flush()
+                ArticleReadingProjector._append_image(drafts, segment.image)
+                continuing = False
+                continue
+            if (
+                block_type == "heading"
+                or segment.atomic
+                or segment.link is not None
+                or len(segment.text) <= _MAX_BLOCK_CHARS
+            ):
                 pieces = [segment]
             else:
                 pieces = [
@@ -583,49 +694,22 @@ class ArticleReadingProjector:
         )
 
     @staticmethod
-    def _drop_trailing_account_footer(drafts: list[dict[str, object]]) -> list[dict[str, object]]:
-        """Drop account recommend-walls after an explicit footer marker.
-
-        In-article lists under a real heading (for example 延伸阅读) stay.
-        """
-        cut: int | None = None
-        for index, draft in enumerate(drafts):
-            if draft["type"] == "heading":
-                continue
-            if _clean_text(str(draft.get("text") or "")) in _ACCOUNT_FOOTER_MARKERS:
-                tail = drafts[index + 1 :]
-                # Require an actual short recommendation wall, not a prose
-                # mention or a real section sharing the same title.
-                linked = [item for item in tail if item.get("links")]
-                if (
-                    len(linked) >= 2
-                    and len(tail) >= 2
-                    and all(
-                        item.get("links")
-                        and sum(
-                            len(link.text) for link in cast(tuple[ReadingLink, ...], item["links"])
-                        )
-                        >= 0.7 * len(str(item.get("text", "")))
-                        for item in tail[:2]
-                    )
-                    and not any(item["type"] == "heading" for item in tail)
-                    and sum(len(str(item.get("text", ""))) for item in tail) <= 1500
-                ):
-                    cut = index
-        if cut is None:
-            return drafts
-        return drafts[:cut]
-
-    @staticmethod
     def _sections(blocks: tuple[ReadingBlock, ...]) -> tuple[ReadingSection, ...]:
         headings = [block for block in blocks if block.type == "heading"]
         if not headings:
-            return (ReadingSection("正文", 1, 0, len(blocks)),)
+            return (ReadingSection("正文", 1, 0, len(blocks), synthetic=True),)
         sections: list[ReadingSection] = []
         if headings[0].index > 0:
-            sections.append(ReadingSection("正文", 1, 0, headings[0].index))
+            sections.append(ReadingSection("正文", 1, 0, headings[0].index, synthetic=True))
         for position, heading in enumerate(headings):
-            end = headings[position + 1].index if position + 1 < len(headings) else len(blocks)
+            end = next(
+                (
+                    item.index
+                    for item in headings[position + 1 :]
+                    if (item.level or 1) <= (heading.level or 1)
+                ),
+                len(blocks),
+            )
             sections.append(ReadingSection(heading.text, heading.level or 1, heading.index, end))
         return tuple(sections)
 

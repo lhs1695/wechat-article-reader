@@ -219,7 +219,9 @@ def test_read_pages_are_continuous() -> None:
     service = ArticleReadingService(_Workflow(article), storage)
 
     first = service.read(article.id, max_chars=1_000)
-    second = service.read(article.id, cursor=first.next_cursor or 0, max_chars=1_000)
+    second = service.read(
+        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+    )
 
     assert first.has_more is True
     assert second.cursor == first.next_cursor
@@ -246,7 +248,11 @@ def test_text_only_reading_skips_images_and_keeps_cursor_continuous() -> None:
 
     first = service.read(article.id, max_chars=1_000, include_images=False)
     second = service.read(
-        article.id, cursor=first.next_cursor or 0, max_chars=1_000, include_images=False
+        article.id,
+        cursor=first.next_cursor or 0,
+        expected_revision=first.revision,
+        max_chars=1_000,
+        include_images=False,
     )
 
     assert "![" not in first.content_markdown
@@ -350,7 +356,9 @@ def test_read_does_not_split_list_group_across_pages() -> None:
     service = ArticleReadingService(_Workflow(article), _Storage(article))
 
     first = service.read(article.id, max_chars=1_000)
-    second = service.read(article.id, cursor=first.next_cursor or 0, max_chars=1_000)
+    second = service.read(
+        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+    )
 
     assert "一" not in first.content_markdown
     assert all(marker in second.content_markdown for marker in ("一", "二", "三"))
@@ -362,7 +370,9 @@ def test_read_prefers_breaking_before_nested_heading() -> None:
     service = ArticleReadingService(_Workflow(article), _Storage(article))
 
     first = service.read(article.id, max_chars=1_000)
-    second = service.read(article.id, cursor=first.next_cursor or 0, max_chars=1_000)
+    second = service.read(
+        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+    )
 
     assert "第一部" in first.content_markdown
     assert "细节" not in first.content_markdown
@@ -425,7 +435,9 @@ def test_headingless_continuation_does_not_inject_synthetic_title() -> None:
     service = ArticleReadingService(_Workflow(article), _Storage(article))
 
     first = service.read(article.id, max_chars=1_000)
-    second = service.read(article.id, cursor=first.next_cursor or 0, max_chars=1_000)
+    second = service.read(
+        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+    )
 
     assert first.has_more is True
     assert first.section_title == "正文"
@@ -448,7 +460,7 @@ def test_section_seek_stops_at_section_end() -> None:
     assert "后面还有" not in page.content_markdown
 
 
-def test_section_seek_drops_next_heading_teasers_but_keeps_short_prose() -> None:
+def test_section_seek_preserves_possible_decorators_and_short_prose() -> None:
     article = _article(
         "<h3>第二阶段：骨架</h3><p>该用规则的地方用规则。</p>"
         "<p>05</p><p>PHASE THREE</p>"
@@ -464,7 +476,7 @@ def test_section_seek_drops_next_heading_teasers_but_keeps_short_prose() -> None
 
     assert sliced.has_more is False
     assert "该用规则的地方用规则" in sliced.content_markdown
-    assert "PHASE THREE" not in sliced.content_markdown
+    assert "PHASE THREE" in sliced.content_markdown
     assert "后面还有" not in sliced.content_markdown
     assert "PHASE THREE" in whole.content_markdown
     assert "不重复了" in prose.content_markdown
@@ -477,7 +489,11 @@ def test_section_and_cursor_continue_inside_section_only() -> None:
 
     first = service.read(article.id, section="甲节", max_chars=1_000)
     second = service.read(
-        article.id, section="甲节", cursor=first.next_cursor or 0, max_chars=1_000
+        article.id,
+        section="甲节",
+        cursor=first.next_cursor or 0,
+        expected_revision=first.revision,
+        max_chars=1_000,
     )
 
     assert first.has_more is True
@@ -517,7 +533,9 @@ def test_continuation_page_uses_current_section_not_later_heading() -> None:
     service = ArticleReadingService(_Workflow(article), _Storage(article))
 
     first = service.read(article.id, max_chars=1_000)
-    second = service.read(article.id, cursor=first.next_cursor or 0, max_chars=1_000)
+    second = service.read(
+        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+    )
 
     assert first.has_more is True
     assert second.section_title == "三、实践"
@@ -529,8 +547,8 @@ def test_read_jumps_to_section_title_and_unique_prefix() -> None:
     article = _article("<h2>前言</h2><p>甲段</p><h2>实践总结</h2><p>乙段内容</p>")
     service = ArticleReadingService(_Workflow(article), _Storage(article))
 
-    exact = service.read(article.id, cursor=99, section="实践总结", max_chars=1_000)
-    prefix = service.read(article.id, cursor=99, section="实践", max_chars=1_000)
+    exact = service.read(article.id, cursor=0, section="实践总结", max_chars=1_000)
+    prefix = service.read(article.id, cursor=0, section="实践", max_chars=1_000)
 
     assert "乙段内容" in exact.content_markdown
     assert "甲段" not in exact.content_markdown

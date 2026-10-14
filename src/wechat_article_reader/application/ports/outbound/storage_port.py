@@ -1,10 +1,11 @@
 """存储出站端口 - 定义存储适配器必须实现的接口"""
 
 from datetime import datetime
+from threading import Event
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from ....domain.entities import Article
+from ....domain.entities import Article, Summary
 
 
 class StorageStats(Protocol):
@@ -26,7 +27,7 @@ class StoragePort(Protocol):
     用于文章的持久化存储和检索。
     """
 
-    def save(self, article: Article) -> None:
+    def save(self, article: Article, *, cancel_event: Event | None = None) -> None:
         """
         保存文章
 
@@ -36,6 +37,17 @@ class StoragePort(Protocol):
         Raises:
             StorageError: 保存失败
         """
+        ...
+
+    def save_summary(
+        self,
+        article_id: UUID,
+        expected_revision: str,
+        summary: Summary,
+        *,
+        cancel_event: Event | None = None,
+    ) -> bool:
+        """Persist only the summary if the article snapshot is still current."""
         ...
 
     def get(self, article_id: UUID) -> Article | None:

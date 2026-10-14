@@ -86,6 +86,14 @@ class ErrorCode(Enum):
         return f"[{self._code}] {self._message}"
 
 
+class ArticleVersionChangedError(RuntimeError):
+    """A cached snapshot was replaced while a caller was using it."""
+
+    def __init__(self, current_revision: str | None = None):
+        self.current_revision = current_revision
+        super().__init__("文章版本已变化，请重新获取目录并开始阅读")
+
+
 class WechatArticleReaderError(Exception):
     """基础异常类
 

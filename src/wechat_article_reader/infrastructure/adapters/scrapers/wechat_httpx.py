@@ -154,7 +154,9 @@ class WechatHttpxScraper(BaseScraper):
         """关闭资源（当前无持久连接）"""
         return
 
-    def _get(self, url: str, headers: dict[str, str]) -> httpx.Response:
+    def _get(
+        self, url: str, headers: dict[str, str], *, cancel_event: "CancellationSignal | None" = None
+    ) -> httpx.Response:
         try:
             return safe_fetch_sync(
                 url,
@@ -166,6 +168,7 @@ class WechatHttpxScraper(BaseScraper):
                 allowed_redirect=lambda target: urlsplit(target).hostname == "mp.weixin.qq.com",
                 max_response_bytes=self._max_response_bytes,
                 allowed_content_types={"text/html", "application/xhtml+xml"},
+                cancel_event=cancel_event,
             )
         except SSRFBlockedError as e:
             logger.warning("抓取失败 kind=blocked reason=ssrf")
@@ -184,7 +187,11 @@ class WechatHttpxScraper(BaseScraper):
                 raise OperationCancelledError()
             self._wait_for_request_slot(cancel_event)
             try:
-                response = self._get(url, headers)
+                response = self._get(
+                    url,
+                    headers,
+                    **({"cancel_event": cancel_event} if cancel_event is not None else {}),
+                )
             except (httpx.TimeoutException, httpx.TransportError):
                 if attempt == max(1, self._max_retries):
                     raise

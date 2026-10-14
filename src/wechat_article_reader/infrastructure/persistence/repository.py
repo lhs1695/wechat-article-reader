@@ -6,39 +6,22 @@ import hashlib
 import json
 from dataclasses import asdict
 from datetime import UTC, datetime
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from ...domain.entities import Article
 from ...domain.entities.source import ArticleSource, SourceType
 from ...domain.entities.summary import Summary
 from ...domain.value_objects import ArticleContent, ArticleURL
+from ...shared.exceptions import ArticleVersionChangedError
+from ...shared.utils.article_identity import article_digest, normalize_article_url
 from .models import ArticleModel, SummaryModel
-
-TRACKING_QUERY_KEYS = frozenset(
-    {"from", "scene", "clicktime", "enterid", "sessionid", "subscene", "ascene"}
-)
-
-
-def normalize_article_url(url: str) -> str:
-    """去除不参与文章身份的 fragment 和常见追踪参数。"""
-    parts = urlsplit(url.strip())
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
-        if not key.lower().startswith("utm_") and key.lower() not in TRACKING_QUERY_KEYS
-    ]
-    return urlunsplit(
-        (parts.scheme.lower(), parts.netloc.lower(), parts.path, urlencode(query), "")
-    )
 
 
 def content_digest(content: str) -> str:
-    normalized = "\n".join(line.strip() for line in content.splitlines() if line.strip())
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _utc(value: datetime) -> datetime:
@@ -53,16 +36,31 @@ class SqlAlchemyArticleRepository:
 
     def save(self, article: Article) -> None:
         normalized_url = normalize_article_url(str(article.url))
-        model = self._session.scalar(
+        model = self._session.get(ArticleModel, str(article.id)) or self._session.scalar(
             select(ArticleModel).where(ArticleModel.normalized_url == normalized_url)
         )
         if model is None:
-            model = ArticleModel(id=str(article.id), normalized_url=normalized_url)
+            model = ArticleModel(
+                id=str(article.id), normalized_url=normalized_url, revision=article.revision
+            )
             self._session.add(model)
-        elif model.id != str(article.id):
+        else:
+            if model.id == str(article.id) and model.revision != article.revision:
+                raise ArticleVersionChangedError(model.revision)
             object.__setattr__(article, "id", UUID(model.id))
+            object.__setattr__(article, "created_at", _utc(model.created_at))
 
-        content_hash = content_digest(article.content_text)
+        content_hash = article_digest(
+            article.content_html,
+            article.content_text,
+            article.title,
+            article.author,
+            article.account_name,
+        )
+        if model.content_hash and model.content_hash != content_hash:
+            model.revision = str(uuid4())
+            object.__setattr__(article, "summary", None)
+        object.__setattr__(article, "revision", model.revision)
         model.url = str(article.url)
         model.title = article.title
         model.author = article.author
@@ -81,6 +79,19 @@ class SqlAlchemyArticleRepository:
 
         if article.summary is not None:
             self._save_summary(model.id, content_hash, article.summary)
+
+    def save_summary(self, article_id: UUID, expected_revision: str, summary: Summary) -> bool:
+        result = self._session.execute(
+            update(ArticleModel)
+            .where(ArticleModel.id == str(article_id), ArticleModel.revision == expected_revision)
+            .values(updated_at=summary.created_at)
+        )
+        if not getattr(result, "rowcount", 0):
+            return False
+        model = self._session.get(ArticleModel, str(article_id))
+        assert model is not None
+        self._save_summary(model.id, model.content_hash, summary)
+        return True
 
     def get(self, article_id: UUID) -> Article | None:
         model = self._session.get(ArticleModel, str(article_id))
@@ -127,10 +138,14 @@ class SqlAlchemyArticleRepository:
         model.key_points_json = json.dumps(list(summary.key_points), ensure_ascii=False)
         model.tags_json = json.dumps(summary.tags, ensure_ascii=False)
         model.one_sentence = summary.one_sentence
+        model.created_at = summary.created_at
+        model.input_hash = summary.input_hash
+        model.generation_json = json.dumps(summary.generation, ensure_ascii=False)
 
     def _to_domain(self, model: ArticleModel) -> Article:
         article = Article(
             id=UUID(model.id),
+            revision=model.revision,
             url=ArticleURL.from_string(model.url),
             title=model.title,
             author=model.author,
@@ -162,6 +177,8 @@ class SqlAlchemyArticleRepository:
                     tags=tuple(json.loads(summary_model.tags_json)),
                     one_sentence=summary_model.one_sentence,
                     created_at=_utc(summary_model.created_at),
+                    input_hash=summary_model.input_hash,
+                    generation=json.loads(summary_model.generation_json),
                 )
             )
             object.__setattr__(article, "updated_at", _utc(model.updated_at))

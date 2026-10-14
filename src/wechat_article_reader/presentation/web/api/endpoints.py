@@ -94,6 +94,8 @@ def read_article_markdown(
     cursor: int = Query(0, ge=0),
     max_chars: int = Query(20_000, ge=1_000, le=20_000),
     include_images: bool = Query(False),
+    expected_revision: str | None = Query(None),
+    section_start_cursor: int | None = Query(None, ge=0),
     container: ContainerDependency = None,  # type: ignore[assignment]
 ) -> dict[str, object]:
     """Return the same paginated Markdown projection used by the MCP reader."""
@@ -106,6 +108,8 @@ def read_article_markdown(
             cursor=cursor,
             max_chars=max_chars,
             include_images=include_images,
+            expected_revision=expected_revision,
+            section_start_cursor=section_start_cursor,
         ).to_dict(),
     }
 
@@ -218,7 +222,7 @@ def history_list(
             title=article.title,
             url=str(article.url),
             word_count=article.word_count,
-            cached_at=article.updated_at.isoformat(),
+            cached_at=article.created_at.isoformat(),
             summarized=article.summary is not None,
         )
         for article in articles
