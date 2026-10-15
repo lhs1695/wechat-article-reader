@@ -77,6 +77,7 @@ class IngestResult:
     block_count: int = 0
     revision: str = ""
     content_notes: tuple[str, ...] = ()
+    images: tuple[dict[str, object], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -102,6 +103,7 @@ class ArticleReadingMetadata:
     summary_generated_at: str | None = None
     summary_generation: dict[str, object] | None = None
     content_notes: tuple[str, ...] = ()
+    images: tuple[dict[str, object], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -130,6 +132,7 @@ class ArticleReadPage:
     next_read: dict[str, object] | None = None
     reading_scope: str = "article"
     end_of_article: bool = False
+    images: tuple[dict[str, object], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +155,7 @@ class ArticleReadPage:
             "next_read": self.next_read,
             "reading_scope": self.reading_scope,
             "end_of_article": self.end_of_article,
+            "images": list(self.images),
         }
 
 
@@ -162,6 +166,7 @@ class ArticleExportResult:
     word_count: int
     export_path: str
     revision: str = ""
+    image_manifest_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

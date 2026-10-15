@@ -37,6 +37,8 @@ class ExportRequest(BaseModel):
     summary_content: str = ""
     key_points: list[str] = Field(default_factory=list)
     include_body: bool = True
+    include_images: bool | None = None
+    download_images: bool = False
 
     _validate_url = field_validator("url")(_validate_http_url)
 

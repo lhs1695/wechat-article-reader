@@ -147,7 +147,7 @@ def _table_content(table: Tag, base_url: str | None = None) -> _InlineContent:
     markdown_rows: list[list[str]] = []
     links: list[ReadingLink] = []
     rows = [row for row in table.find_all("tr") if row.find_parent("table") is table]
-    complex_table = table.find("table") is not None or any(
+    complex_table = table.find(["table", "img"]) is not None or any(
         str(cell.get(name, "1")) != "1"
         for cell in table.find_all(["th", "td"])
         for name in ("rowspan", "colspan")
@@ -187,6 +187,12 @@ def _table_content(table: Tag, base_url: str | None = None) -> _InlineContent:
         from ...shared.utils.html_safety import sanitize_html
 
         safe_table = BeautifulSoup(sanitize_html(str(table)), "html.parser")
+        for image in safe_table.find_all("img"):
+            url = _safe_image_url(image.get("src"))
+            if url:
+                image["src"] = url
+            else:
+                image.replace_with(str(image.get("alt") or ""))
         for anchor in safe_table.find_all("a"):
             url = _safe_link_url(anchor.get("href"), base_url)
             if url:

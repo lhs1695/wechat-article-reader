@@ -9,6 +9,11 @@
 <div class="card">
   <div class="card-title">文章链接</div>
   <input type="url" id="url" placeholder="https://mp.weixin.qq.com/s/...">
+  <div style="margin-top:12px">
+    <label><input type="checkbox" id="export-images"> Markdown 显示图片</label>
+    <label><input type="checkbox" id="download-images"> 下载配图（导出 ZIP 离线包）</label>
+    <p>两个选项独立。下载配图仅适用于包含正文的 Markdown；不会自动进行图片理解。</p>
+  </div>
 
   <div class="btn-group" id="actions">
     <button class="btn" data-action="fetch">原文抓取</button>
@@ -112,6 +117,10 @@ async function dlExport(articleUrl,target){
       skip_summary:isFetch,
       include_body:!isSummarize,
     };
+    if(target==='markdown'){
+      body.include_images=$('export-images').checked;
+      body.download_images=!isSummarize && $('download-images').checked;
+    }
     if(!isFetch && lastSummary){
       body.summary_content=lastSummary.overview;
       body.key_points=lastSummary.key_points||[];

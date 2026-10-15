@@ -85,6 +85,7 @@ class ArticleWorkflowService:
         key_points: list[str] | tuple[str, ...] = (),
         tags: list[str] | tuple[str, ...] = (),
         continue_on_summary_error: bool = False,
+        download_images: bool = False,
     ) -> ArticleProcessPayload:
         from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
 
@@ -126,6 +127,10 @@ class ArticleWorkflowService:
         if target is not None:
             assert self._export_use_case is not None
             export_options: dict[str, object] = {"include_body": include_body}
+            if download_images:
+                if target != "markdown":
+                    raise ValueError("download_images 目前仅支持 Markdown 导出")
+                export_options["download_images"] = True
             if cancel_event is not None:
                 export_options["cancel_event"] = cancel_event
             if include_images is not None:
@@ -316,6 +321,7 @@ class ArticleWorkflowService:
         include_images: bool | None = None,
         path: str | None = None,
         tags: list[str] | tuple[str, ...] = (),
+        download_images: bool = False,
     ) -> ArticleExportPayload:
         payload = self.process(
             url,
@@ -327,6 +333,7 @@ class ArticleWorkflowService:
             summary_content=summary_content,
             key_points=key_points,
             tags=tags,
+            download_images=download_images,
         )
         return ArticleExportPayload(
             payload.article, payload.export_path or "", payload.summary is not None
@@ -340,11 +347,14 @@ class ArticleWorkflowService:
         path: str | None = None,
         include_body: bool = True,
         include_images: bool | None = None,
+        download_images: bool = False,
         cancel_event: Event | None = None,
     ) -> str:
         if self._export_use_case is None:
             raise RuntimeError("导出工作流不可用")
         options: dict[str, object] = {"include_body": include_body}
+        if download_images:
+            options["download_images"] = True
         if cancel_event is not None:
             options["cancel_event"] = cancel_event
         if include_images is not None:

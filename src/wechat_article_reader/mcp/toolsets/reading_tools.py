@@ -30,8 +30,8 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         要整篇 Markdown 文件时，随后调用 export_article 写盘；不要拼接 read_article 分页。
         默认 toc_level=2（H2）。若文章没有这么浅的标题（例如正文全是 H3），目录自动对齐到最浅一层。
         需要更细的纲时再提高 toc_level。篇幅不超过 read_article 的 max_chars 时一次读完。
-        更长的文章按 sections 标题或 start_cursor 跳读（传 section 只返回该节）；
-        只有节内仍超长才跟随 next_cursor。通读长文优先 summarize_article。
+        更长的文章按 sections 标题或 start_cursor 跳读（父章节包含子章节）；
+        节内仍超长时跟随 next_read。完整图文理解需另用 read_article_image 核对配图。
         """
         try:
             if not isinstance(refresh, bool):
@@ -131,19 +131,26 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         path: str,
         include_images: bool = False,
         expected_revision: str | None = None,
+        download_images: bool = False,
     ) -> dict[str, Any]:
-        """将已缓存文章导出为 Markdown 文件。不联网，成功响应仅返回 export_path，不回传正文。
+        """将缓存文章导出 Markdown。默认不联网；download_images=true 时下载微信 CDN 图片。
 
-        path 必须是绝对 .md 文件路径，或已存在的目录。include_images 默认 false。
+        path 必须是绝对 .md 文件路径或已存在目录。include_images 仅控制显示，
+        download_images 独立控制下载和同名 .assets 图片清单；两个开关默认 false。
+        下载失败在 Markdown 和清单中标记；下载不会把图片送入视觉模型。
+        成功返回 export_path 和可选 image_manifest_path，不回传正文。
         """
         try:
             if not isinstance(include_images, bool):
                 raise MCPValidationError("include_images must be a boolean")
+            if type(download_images) is not bool:
+                raise MCPValidationError("download_images must be a boolean")
             result = await run_cancellable(
                 service().export_markdown,
                 MCPInputValidator.validate_article_id(article_id),
                 path=MCPInputValidator.validate_export_path(path),
                 include_images=include_images,
+                **({"download_images": True} if download_images else {}),
                 **(
                     {"expected_revision": MCPInputValidator.validate_revision(expected_revision)}
                     if expected_revision is not None
@@ -154,4 +161,52 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         except Exception as exc:
             raise_mcp_error(
                 exc, fallback=("article_export_failed", "导出文章失败"), article_id=article_id
+            )
+
+    @mcp_instance.tool()
+    @secure_tool
+    async def read_article_image(
+        article_id: str,
+        image_id: str,
+        expected_revision: str,
+        download_image: bool = False,
+        send_to_model: bool = False,
+    ) -> list[Any]:
+        """按阅读页 images 编号读取文章图片，不接受任意 URL。
+
+        默认仅返回元数据。download_image=true 允许下载到本地缓存；
+        send_to_model=true 才返回 MCP 图像内容，需客户端及模型支持视觉。
+        两个开关独立：缓存图片可不联网直接提供；未缓存时须显式允许下载。
+        动画仅提供首帧 PNG 预览，并明确标记其他帧未覆盖。
+        图文阅读需逐张调用并核对 images 清单；工具无法断言模型已理解图片。
+        """
+        import base64
+        import json
+
+        from mcp.types import ImageContent, TextContent
+
+        try:
+            metadata, asset = await run_cancellable(
+                service().read_image,
+                MCPInputValidator.validate_article_id(article_id),
+                image_id,
+                expected_revision=MCPInputValidator.validate_revision(expected_revision),
+                download_image=download_image,
+                send_to_model=send_to_model,
+            )
+            content: list[Any] = [
+                TextContent(type="text", text=json.dumps(metadata, ensure_ascii=False))
+            ]
+            if asset is not None:
+                content.append(
+                    ImageContent(
+                        type="image",
+                        data=base64.b64encode(asset.data).decode("ascii"),
+                        mimeType=asset.mime_type,
+                    )
+                )
+            return content
+        except Exception as exc:
+            raise_mcp_error(
+                exc, fallback=("article_image_failed", "图片读取失败"), article_id=article_id
             )

@@ -53,13 +53,14 @@
 | `ingest_article(url, refresh=false, toc_level=2)` | 联网 + 写 SQLite | 唯一抓公众号入口；默认 H2，无 H2 时对齐到最浅标题 |
 | `get_cached_article(article_id, toc_level=2)` | 无 | 再读元数据；ingest 已带目录时可跳过 |
 | `read_article(article_id, cursor=0, max_chars=20000, include_images=false, section=null, section_start_cursor=null, expected_revision=null)` | 无 | 把一页或一节读进模型上下文；续读原样使用 `next_read` |
-| `export_article(article_id, path, include_images=false)` | 写盘 | 已缓存文章导出 Markdown；`path` 为绝对 `.md` 路径或已存在目录；成功体不含正文 |
+| `export_article(article_id, path, include_images=false, download_images=false)` | 写盘；显式下载时联网 | 导出 Markdown；可同时导出 `.assets` 图片和清单，成功体不含正文 |
+| `read_article_image(article_id, image_id, expected_revision, download_image=false, send_to_model=false)` | 显式下载时联网/写图片缓存；显式提供时返回图像 | 默认仅元数据，图片编号来自阅读页/元数据；客户端需支持视觉 |
 | `summarize_article(article_id, max_length=1200)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
 **明确不做**
 
 - 只接受 `mp.weixin.qq.com` 文章链接。
-- 不提供 OCR、图片理解、图片本地下载。
+- 不自动调用视觉模型或执行 OCR；可以下载配图，并显式向支持视觉的 Agent 提供图片内容。
 - 不提供知识库、全文检索、跨文章分析、内部 Agent / Run / Trace。
 - 不把一篇超长文自动 MapReduce 成「看起来完整」的摘要；超过模型输入上限就明确失败。
 - 不把内部 block ID、content hash 当成对外 API。
@@ -74,11 +75,11 @@ Markdown 导出保留代码缩进、空行、语言标记、嵌套列表、引�
 - 不传 `section` 且全文不超过 `max_chars`（默认 20000）就一次返回，不要先翻页。
 - `section` 返回该章及其子章节；重名标题用目录中的 `start_cursor` 作为 `section_start_cursor`。
 - `cursor` 是内容块索引；续读原样传响应中的 `next_read`（包含 `expected_revision`）。文章变化返回 `article_changed`，重新获取目录后阅读。
-- 失败是 MCP **isError**（`code: 说明`），不是 `{success:false}`。五个工具成功体都带 `source_trust: "untrusted_web_content"`。
+- 失败是 MCP **isError**（`code: 说明`），不是 `{success:false}`。工具成功体均标记 `source_trust: "untrusted_web_content"`；图片工具用文本元数据加可选图像内容块。
 
 ## 为什么这么设计
 
-- **五个工具按副作用拆开。** `ingest_article` 联网写库；`read_article` 只读缓存；`export_article` 只写盘；`summarize_article` 只打模型。代价是 Agent 必须先 ingest 再读或导出。
+- **工具按副作用拆开。** `ingest_article` 抓文章写库；`read_article` 只读文字；导出和图片工具仅在显式允许时下载配图；`summarize_article` 调用文本摘要模型。
 - **超长文明确失败，不自动 MapReduce。** 超过 `DEEPSEEK__MAX_INPUT_CHARS` 就 `article_too_long`，交给分页阅读或 `export_article`。代价是没有一份「看起来完整」的自动摘要，也不服务端偷偷截断再假装读完。
 - **三个入口默认不含图。** 装饰图不该占 Agent 上下文；需要时显式打开。代价是默认页只留说明文字，看不到配图。
 - **失败走 MCP isError，而不是 `{success:false}` 假成功体。** 宿主能把失败和正文分开，模型不该在成功通道里解析错误对象。代价是客户端必须按协议处理 isError。
@@ -87,6 +88,7 @@ Markdown 导出保留代码缩进、空行、语言标记、嵌套列表、引�
 - **整篇 md 走 `export_article`，分页是读接口。** 本地 Agent 要文件时 MCP 写盘并只返回路径，避免把全文塞进 tool 结果。`read_article` 管进上下文的一页/一节。人用 CLI `fetch --export` 仍然可用。
 - **缓存摘要绑定正文版本。** 刷新文章后，旧正文的摘要不会再显示为当前摘要；需要时重新调用 `summarize_article`。
 - **图片链接不代表读过图片。** 阅读页报告图片总数、省略数及 `image_content_read=false`，需要图片信息时另行查看原图。
+- **显示、下载、提供给视觉模型独立。** `include_images` 控制 Markdown 标记，`download_images` 控制离线资源，`send_to_model` 控制 MCP 图像内容。全部默认关闭；下载失败明确标记，完整图文阅读须核对图片清单。示例见 [用法](docs/用法.md)。
 - **保留原文结尾。** 不再按短数字、大写词或推荐墙猜测删除正文；疑似推荐内容通过 `content_notes` 提示。
 
 ## 怎么跑

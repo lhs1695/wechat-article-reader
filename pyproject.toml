@@ -38,6 +38,7 @@ dependencies = [
     "rich>=13.0.0",
     # 导出
     "markdownify>=0.11.0",
+    "Pillow>=11,<13",
     # 路径管理
     "platformdirs>=3.0.0",
 ]

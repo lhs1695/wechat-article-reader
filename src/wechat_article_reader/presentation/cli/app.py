@@ -6,6 +6,7 @@ import sys
 from datetime import UTC
 from importlib.util import find_spec
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -75,9 +76,11 @@ def _process_single(
     export: str | None = None,
     output: str | None = None,
     include_images: bool | None = None,
+    download_images: bool = False,
 ) -> None:
     """抓取并处理单篇文章（CLI/别名命令复用）"""
     container = get_container()
+    image_options: dict[str, Any] = {"download_images": True} if download_images else {}
 
     with _create_single_progress() as progress:
         task = progress.add_task("正在处理文章...", total=None)
@@ -89,6 +92,7 @@ def _process_single(
                 path=output,
                 include_images=include_images,
                 continue_on_summary_error=True,
+                **image_options,
             )
         except Exception as e:
             console.print(f"[red]处理失败: {e}")
@@ -170,7 +174,19 @@ def db_downgrade(revision: str) -> None:
     is_flag=True,
     help="Markdown 导出时保留图片语法（默认与 MCP 阅读一致，不含图）",
 )
-def fetch(url: str, no_summary: bool, export: str | None, output: str | None, images: bool):
+@click.option(
+    "--download-images",
+    is_flag=True,
+    help="下载 Markdown 配图到同名 .assets 目录，与 --images 显示开关独立",
+)
+def fetch(
+    url: str,
+    no_summary: bool,
+    export: str | None,
+    output: str | None,
+    images: bool,
+    download_images: bool,
+):
     """
     抓取并处理单篇文章
 
@@ -178,12 +194,15 @@ def fetch(url: str, no_summary: bool, export: str | None, output: str | None, im
         wechat-article-reader fetch https://mp.weixin.qq.com/s/xxx
         wechat-article-reader fetch URL -e markdown -o output.md
     """
+    if download_images and export != "markdown":
+        raise click.UsageError("--download-images 需要 --export markdown")
     _process_single(
         url,
         no_summary=no_summary,
         export=export,
         output=output,
         include_images=True if images else None,
+        download_images=download_images,
     )
 
 

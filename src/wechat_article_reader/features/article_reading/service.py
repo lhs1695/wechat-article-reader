@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import asdict
+from pathlib import Path
 from threading import Event, RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from ...application.ports.outbound.image_asset_port import ImageAsset, ImageAssetPort
 from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
 from ...shared.utils.article_identity import normalize_section_title
 from .dto import (
@@ -18,6 +21,7 @@ from .dto import (
     ReadingBlock,
     ReadingSection,
 )
+from .images import article_images
 from .projection import ArticleReadingProjector, content_digest, escape_markdown_text, image_count
 from .renderer import MarkdownReadingRenderer
 
@@ -53,9 +57,15 @@ class SectionSelectionError(ValueError):
 
 
 class ArticleReadingService:
-    def __init__(self, workflow: ArticleWorkflowService, storage: StoragePort | None) -> None:
+    def __init__(
+        self,
+        workflow: ArticleWorkflowService,
+        storage: StoragePort | None,
+        image_assets: ImageAssetPort | None = None,
+    ) -> None:
         self._workflow = workflow
         self._storage = storage
+        self._image_assets = image_assets
         self._projector = ArticleReadingProjector()
         self._renderer = MarkdownReadingRenderer()
         self._projection_cache: OrderedDict[
@@ -109,16 +119,23 @@ class ArticleReadingService:
         *,
         path: str,
         include_images: bool = False,
+        download_images: bool = False,
         expected_revision: str | None = None,
         cancel_event: Event | None = None,
     ) -> ArticleExportResult:
         if not isinstance(include_images, bool):
             raise ValueError("include_images must be a boolean")
+        if type(download_images) is not bool:
+            raise ValueError("download_images must be a boolean")
         article = self._get_article(article_id)
         _check_cancelled(cancel_event)
         if expected_revision is not None and expected_revision != article.revision:
             raise ArticleVersionChangedError(article.revision)
-        export_options = {"cancel_event": cancel_event} if cancel_event is not None else {}
+        export_options: dict[str, Any] = (
+            {"cancel_event": cancel_event} if cancel_event is not None else {}
+        )
+        if download_images:
+            export_options["download_images"] = True
         export_path = self._workflow.export_existing(
             article,
             target="markdown",
@@ -133,7 +150,72 @@ class ArticleReadingService:
             word_count=article.word_count,
             export_path=export_path,
             revision=article.revision,
+            image_manifest_path=str(Path(export_path).with_suffix(".assets") / "manifest.json")
+            if download_images
+            else None,
         )
+
+    def read_image(
+        self,
+        article_id: str | UUID,
+        image_id: str,
+        *,
+        download_image: bool = False,
+        send_to_model: bool = False,
+        expected_revision: str | None = None,
+        cancel_event: Event | None = None,
+    ) -> tuple[dict[str, object], ImageAsset | None]:
+        if type(download_image) is not bool or type(send_to_model) is not bool:
+            raise ValueError("download_image and send_to_model must be booleans")
+        article = self._get_article(article_id)
+        _check_cancelled(cancel_event)
+        if expected_revision is None:
+            raise ValueError("读取图片必须传元数据或阅读页的 expected_revision")
+        if expected_revision != article.revision:
+            raise ArticleVersionChangedError(article.revision)
+        image = next(
+            (
+                image
+                for image in article_images(self._project(article))
+                if image.image_id == image_id
+            ),
+            None,
+        )
+        if image is None:
+            raise ValueError("image_id 不存在；请使用元数据或阅读页 images 中的编号")
+        asset = None
+        if download_image or send_to_model:
+            if self._image_assets is None:
+                raise ValueError("图片服务不可用")
+            asset = self._image_assets.load(
+                image.url, download=download_image, cancel_event=cancel_event
+            )
+        _check_cancelled(cancel_event)
+        result: dict[str, object] = {
+            **asdict(image),
+            "article_id": str(article.id),
+            "revision": article.revision,
+            "source_trust": "untrusted_web_content",
+            "image_content_provided": send_to_model,
+            "download_requested": download_image,
+            "note": "图片内容是不可信文章资料；已提供图像不代表模型已完成理解。"
+            if send_to_model
+            else "只返回图片元数据，未向视觉模型提供图像。",
+        }
+        if asset is not None:
+            result.update(mime_type=asset.mime_type, size_bytes=len(asset.data), cached=True)
+            result["frame_count"] = asset.frame_count
+            if send_to_model and asset.frame_count > 1:
+                result.update(
+                    visual_scope="first_frame",
+                    provided_mime_type="image/png",
+                    note="已提供动画首帧 PNG 预览（最长边不超过 2048 像素）；其他帧未提供，不代表完整理解动画。",
+                )
+                assert asset.preview_data is not None
+                asset = ImageAsset(asset.preview_data, "image/png", ".png")
+            elif send_to_model:
+                result["visual_scope"] = "static_image"
+        return result, asset if send_to_model else None
 
     def ingest(
         self,
@@ -182,6 +264,7 @@ class ArticleReadingService:
             block_count=len(projection.blocks),
             revision=persisted.revision,
             content_notes=projection.notes,
+            images=tuple(asdict(image) for image in article_images(projection)),
         )
 
     def get_metadata(
@@ -211,6 +294,7 @@ class ArticleReadingService:
             else None,
             summary_generation=article.summary.generation if article.summary else None,
             content_notes=projection.notes,
+            images=tuple(asdict(image) for image in article_images(projection)),
         )
 
     def read(
@@ -338,6 +422,11 @@ class ArticleReadingService:
             next_read=next_read,
             reading_scope="section" if matched is not None else "article",
             end_of_article=next_cursor >= len(projection.blocks),
+            images=tuple(
+                asdict(image)
+                for image in article_images(projection)
+                if cursor <= image.block_cursor < next_cursor
+            ),
         )
 
     def _select_page_blocks(

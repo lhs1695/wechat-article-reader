@@ -185,9 +185,13 @@ class Container:
         if self._article_reading_service is None:
             with self._lock:
                 if self._article_reading_service is None:
+                    from ..adapters.image_assets import CachedImageAssets
+                    from .paths import get_runtime_dir
+
                     self._article_reading_service = ArticleReadingService(
                         self.article_workflow_service,
                         self.storage,
+                        CachedImageAssets(get_runtime_dir() / "images"),
                     )
         return self._article_reading_service
 

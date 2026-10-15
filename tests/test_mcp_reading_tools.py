@@ -49,6 +49,7 @@ def test_registers_reading_tools(monkeypatch) -> None:
         "get_cached_article",
         "read_article",
         "export_article",
+        "read_article_image",
     }
 
 

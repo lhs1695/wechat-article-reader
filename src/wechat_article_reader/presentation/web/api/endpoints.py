@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -152,16 +152,25 @@ def export_article(
     container: ContainerDependency,
 ) -> FetchResponse:
     try:
+        image_options: dict[str, Any] = {"download_images": True} if req.download_images else {}
         payload = container.article_workflow_service.export(
             req.url,
             target=req.target,
-            include_images=req.target != "markdown",
+            include_images=req.include_images
+            if req.include_images is not None
+            else req.target != "markdown",
+            **image_options,
             skip_summary=req.skip_summary,
             summary_content=req.summary_content,
             key_points=req.key_points,
             include_body=req.include_body,
         )
-        file_id = _public_output_id(payload.export_path)
+        export_path = payload.export_path
+        if req.download_images:
+            from ....infrastructure.adapters.exporters.bundle import bundle_markdown
+
+            export_path = bundle_markdown(export_path)
+        file_id = _public_output_id(export_path)
         return FetchResponse(
             success=True,
             title=f"已导出: {file_id}",

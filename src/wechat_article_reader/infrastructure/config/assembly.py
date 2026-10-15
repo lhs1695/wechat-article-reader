@@ -55,7 +55,13 @@ def build_storage() -> StoragePort:
 
 
 def build_exporters(settings: AppSettings) -> dict[str, ExporterPort]:
+    from ..adapters.image_assets import CachedImageAssets
+    from .paths import get_runtime_dir
+
     return {
         "html": HtmlExporter(output_dir=settings.export.default_output_dir),
-        "markdown": MarkdownExporter(output_dir=settings.export.default_output_dir),
+        "markdown": MarkdownExporter(
+            output_dir=settings.export.default_output_dir,
+            image_assets=CachedImageAssets(get_runtime_dir() / "images"),
+        ),
     }
