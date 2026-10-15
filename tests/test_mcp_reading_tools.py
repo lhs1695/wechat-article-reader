@@ -178,6 +178,8 @@ def test_ingest_article_documents_section_first_reading(monkeypatch) -> None:
     assert documentation is not None
     assert "toc_level" in documentation
     assert "summarize_article" in documentation
+    assert "文字摘要" in documentation
+    assert "不抓取文章" in documentation
     assert "export_article" in documentation
     assert "start_cursor" in documentation
 

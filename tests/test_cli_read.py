@@ -110,7 +110,7 @@ def test_read_images_flag_requests_image_markdown() -> None:
     )
 
 
-def test_read_json_is_safe_for_gbk_stdout() -> None:
+def test_read_json_escapes_non_ascii_for_legacy_transport() -> None:
     service = Mock()
     service.read.return_value = ArticleReadPage(
         article_id="6ba7b810-9dad-11d1-80b4-00c04fd430c8",

@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 from urllib.parse import unquote
@@ -22,6 +24,8 @@ from wechat_article_reader.features.article_reading import (
     ArticleReadingService,
 )
 from wechat_article_reader.features.article_reading.images import article_images
+from wechat_article_reader.infrastructure.adapters.exporters import bundle as bundle_module
+from wechat_article_reader.infrastructure.adapters.exporters import markdown as markdown_module
 from wechat_article_reader.infrastructure.adapters.exporters.bundle import bundle_markdown
 from wechat_article_reader.infrastructure.adapters.exporters.markdown import MarkdownExporter
 from wechat_article_reader.infrastructure.adapters.image_assets import (
@@ -33,6 +37,7 @@ from wechat_article_reader.mcp.toolsets.reading_tools import register_reading_to
 from wechat_article_reader.presentation.cli.app import cli
 from wechat_article_reader.shared.exceptions import (
     ArticleVersionChangedError,
+    ExporterError,
     OperationCancelledError,
 )
 
@@ -231,7 +236,9 @@ def test_bundle_contains_only_manifest_assets_and_rejects_traversal(tmp_path):
     MarkdownExporter(image_assets=Assets()).export(
         article(), str(target), include_images=True, download_images=True
     )
-    (target.with_suffix(".assets") / "unrelated.txt").write_text("not part of export")
+    (target.with_suffix(".assets") / "unrelated.txt").write_text(
+        "not part of export", encoding="utf-8"
+    )
     zip_path = bundle_markdown(str(target))
     with ZipFile(zip_path) as archive:
         assert (
@@ -246,6 +253,134 @@ def test_bundle_contains_only_manifest_assets_and_rejects_traversal(tmp_path):
     manifest.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="越界"):
         bundle_markdown(str(target))
+
+
+def test_bundle_rejects_markdown_and_manifest_from_different_snapshots(tmp_path):
+    target = tmp_path / "article.md"
+    MarkdownExporter(image_assets=Assets()).export(article(), str(target), download_images=True)
+    manifest_path = target.with_suffix(".assets") / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["snapshot"]["revision"] = "stale-revision"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="同一导出快照"):
+        bundle_markdown(str(target))
+
+
+def test_export_cancelled_after_manifest_preparation_keeps_previous_pair(tmp_path, monkeypatch):
+    target = tmp_path / "article.md"
+    exporter = MarkdownExporter(image_assets=Assets())
+    original_article = article()
+    exporter.export(original_article, str(target), download_images=True)
+    previous_markdown = target.read_bytes()
+    manifest = target.with_suffix(".assets") / "manifest.json"
+    previous_manifest = manifest.read_bytes()
+
+    signal = Event()
+    original_generate = exporter._generate_markdown
+
+    def cancel_after_manifest_preparation(item, **options):
+        result = original_generate(item, **options)
+        signal.set()
+        return result
+
+    monkeypatch.setattr(exporter, "_generate_markdown", cancel_after_manifest_preparation)
+    with pytest.raises(OperationCancelledError):
+        exporter.export(article(), str(target), download_images=True, cancel_event=signal)
+
+    assert target.read_bytes() == previous_markdown
+    assert manifest.read_bytes() == previous_manifest
+
+
+def test_markdown_publish_failure_rolls_back_manifest(tmp_path, monkeypatch):
+    target = tmp_path / "article.md"
+    exporter = MarkdownExporter(image_assets=Assets())
+    exporter.export(article(), str(target), download_images=True)
+    previous_markdown = target.read_bytes()
+    manifest = target.with_suffix(".assets") / "manifest.json"
+    previous_manifest = manifest.read_bytes()
+    real_replace = markdown_module.os.replace
+
+    def fail_markdown_replace(source, destination):
+        if Path(destination) == target:
+            raise PermissionError("injected Windows destination replacement failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(markdown_module.os, "replace", fail_markdown_replace)
+    with pytest.raises(ExporterError, match="Markdown导出失败"):
+        exporter.export(article(), str(target), download_images=True)
+
+    assert target.read_bytes() == previous_markdown
+    assert manifest.read_bytes() == previous_manifest
+
+
+def test_same_target_concurrent_exports_publish_one_consistent_snapshot(tmp_path):
+    target = tmp_path / "article.md"
+    exporter = MarkdownExporter(image_assets=Assets())
+    items = [article(), article()]
+    items[0].update_content(ArticleContent.from_html(f'<p>甲</p><img src="{URL}">'))
+    items[1].update_content(ArticleContent.from_html(f'<p>乙</p><img src="{URL}">'))
+    exporter.export(items[0], str(target), download_images=True)
+    from threading import Barrier
+
+    barrier = Barrier(3)
+
+    def publish(item):
+        barrier.wait(timeout=5)
+        return exporter.export(item, str(target), download_images=True)
+
+    def bundle():
+        barrier.wait(timeout=5)
+        return bundle_markdown(str(target))
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        first = executor.submit(publish, items[0])
+        second = executor.submit(publish, items[1])
+        bundled = executor.submit(bundle)
+        results = [first.result(), second.result()]
+        zip_path = Path(bundled.result())
+
+    assert results == [str(target), str(target)]
+    manifest = json.loads(
+        (target.with_suffix(".assets") / "manifest.json").read_text(encoding="utf-8")
+    )
+    text = target.read_text(encoding="utf-8")
+    assert manifest["snapshot"]["revision"] == manifest["revision"]
+    assert manifest["snapshot"]["article_id"] == manifest["article_id"]
+    assert ("甲" in text) != ("乙" in text)
+    assert (tmp_path / manifest["images"][0]["local_path"]).is_file()
+    with ZipFile(zip_path) as archive:
+        assert "article.md" in archive.namelist()
+        assert "article.assets/manifest.json" in archive.namelist()
+        archived_manifest = json.loads(archive.read("article.assets/manifest.json").decode("utf-8"))
+        archived_markdown = archive.read("article.md").decode("utf-8")
+        marker = next(
+            line
+            for line in archived_markdown.splitlines()
+            if line.startswith("<!-- wechat-article-reader-export: ")
+        )
+        marker_snapshot = json.loads(
+            marker.removeprefix("<!-- wechat-article-reader-export: ")[:-4]
+        )
+        assert marker_snapshot == archived_manifest["snapshot"]
+
+
+def test_zip_failure_preserves_previous_bundle(tmp_path, monkeypatch):
+    target = tmp_path / "article.md"
+    MarkdownExporter(image_assets=Assets()).export(article(), str(target), download_images=True)
+    zip_path = Path(bundle_markdown(str(target)))
+    previous = zip_path.read_bytes()
+    real_write = ZipFile.write
+
+    def fail_write(self, *args, **kwargs):
+        raise OSError("injected ZIP write failure")
+
+    monkeypatch.setattr(ZipFile, "write", fail_write)
+    with pytest.raises(OSError, match="ZIP write failure"):
+        bundle_module.bundle_markdown(str(target))
+
+    assert zip_path.read_bytes() == previous
+    monkeypatch.setattr(ZipFile, "write", real_write)
 
 
 def test_image_inventory_includes_complex_tables_and_nested_containers():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -87,42 +88,26 @@ class ArticleWorkflowService:
         continue_on_summary_error: bool = False,
         download_images: bool = False,
     ) -> ArticleProcessPayload:
-        from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
+        from ...shared.exceptions import OperationCancelledError
 
         if target is not None and self._export_use_case is None:
             raise RuntimeError("导出工作流不可用")
         article = self.fetch_article(url, cancel_event=cancel_event)
-        summary = None
+        summary = article.summary if not summarize else None
         summary_error = None
-        if summary_content:
-            from ...domain.entities import Summary
-
-            summary = Summary(
-                overview=summary_content, key_points=tuple(key_points), tags=tuple(tags)
-            )
-            article.attach_summary(summary)
-        elif summarize:
+        # These legacy client fields remain accepted at the API boundary, but the
+        # stored, server-generated summary is the source of truth for export.
+        if summarize:
             try:
-                summary = self._summarize_use_case.execute(
+                article, summary = self._resolve_summary(
                     article, max_length=max_length, cancel_event=cancel_event
                 )
-                article.attach_summary(summary)
             except OperationCancelledError:
                 raise
             except Exception as exc:
                 if not continue_on_summary_error:
                     raise
                 summary_error = str(exc)
-        if summary is not None and self._storage is not None:
-            if cancel_event is not None and cancel_event.is_set():
-                raise OperationCancelledError()
-            if not self._storage.save_summary(
-                article.id,
-                article.revision,
-                summary,
-                **({"cancel_event": cancel_event} if cancel_event is not None else {}),
-            ):
-                raise ArticleVersionChangedError()
         export_path = None
         if target is not None:
             assert self._export_use_case is not None
@@ -165,6 +150,21 @@ class ArticleWorkflowService:
         max_length: int = DEFAULT_SUMMARY_MAX_LENGTH,
         cancel_event: Event | None = None,
     ) -> ArticleSummaryPayload:
+        article, summary = self._resolve_summary(
+            article, max_length=max_length, cancel_event=cancel_event
+        )
+        return ArticleSummaryPayload(
+            article=self._to_metadata(article), summary=self._to_summary(summary)
+        )
+
+    def _resolve_summary(
+        self,
+        article: Article,
+        *,
+        max_length: int,
+        cancel_event: Event | None,
+    ) -> tuple[Article, Summary]:
+        """Reuse or persist a summary for this exact article revision and profile."""
         from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
 
         while not self._summary_lock.acquire(timeout=0.1):
@@ -201,9 +201,7 @@ class ArticleWorkflowService:
                     current = self._storage.get(article.id)
                     raise ArticleVersionChangedError(current.revision if current else None)
                 article.attach_summary(summary)
-            return ArticleSummaryPayload(
-                article=self._to_metadata(article), summary=self._to_summary(summary)
-            )
+            return article, summary
         finally:
             self._summary_lock.release()
 
@@ -266,6 +264,10 @@ class ArticleWorkflowService:
         include_body: bool = True,
         continue_on_summary_error: bool = False,
     ) -> BatchProcessPayload:
+        if target is not None and path is not None:
+            Path(path).mkdir(parents=True, exist_ok=True)
+            if not Path(path).is_dir():
+                raise ValueError("批量导出 path 必须是输出目录")
         results = []
         for url in urls:
             try:

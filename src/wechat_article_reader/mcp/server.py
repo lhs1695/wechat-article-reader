@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from ..shared.constants import DEFAULT_MCP_HTTP_PORT
+from ..shared.encoding import configure_utf8_stdio
 from ..shared.exceptions import InfrastructureError
 from .toolsets import register_article_tools, register_reading_tools
 
@@ -119,6 +120,7 @@ def run_mcp_server(
     allow_remote: bool = False,
 ) -> None:
     """Run the MCP server."""
+    configure_utf8_stdio()
     mcp_instance = _ensure_mcp()
     logger.info(f"启动 MCP 服务器 (transport={transport})")
 

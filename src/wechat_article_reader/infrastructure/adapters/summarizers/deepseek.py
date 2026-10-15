@@ -12,7 +12,11 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ....domain.entities import Summary
 from ....domain.value_objects import ArticleContent
-from ....shared.constants import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_SUMMARY_MAX_LENGTH
+from ....shared.constants import (
+    DEFAULT_DEEPSEEK_BASE_URL,
+    DEFAULT_DEEPSEEK_MODEL,
+    DEFAULT_SUMMARY_MAX_LENGTH,
+)
 from ....shared.exceptions import OperationCancelledError, SummarizerAPIError, SummarizerError
 from ....shared.prompts import STRUCTURED_SUMMARY_PROMPT_TEMPLATE
 from .base import BaseSummarizer
@@ -37,7 +41,7 @@ class DeepSeekSummarizer(BaseSummarizer):
     def __init__(
         self,
         api_key: str,
-        model: str = "deepseek-v4-flash",
+        model: str = DEFAULT_DEEPSEEK_MODEL,
         base_url: str = DEFAULT_DEEPSEEK_BASE_URL,
         timeout: int = 60,
         max_output_tokens: int = 1200,

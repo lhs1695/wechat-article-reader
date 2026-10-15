@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -34,6 +35,7 @@ class Database:
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path is not None else default_database_path()
+        self.write_lock = RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_sqlite_engine(self.path)
         self.session_factory = sessionmaker(

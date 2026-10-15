@@ -11,7 +11,6 @@ from loguru import logger
 
 from ...domain.entities import Article, Summary
 from ...domain.value_objects import ArticleContent
-from ...features.article_reading import SummarySourceRenderer
 from ...shared.constants import DEFAULT_SUMMARY_MAX_LENGTH
 from ...shared.exceptions import (
     OperationCancelledError,
@@ -21,7 +20,7 @@ from ...shared.exceptions import (
 )
 
 if TYPE_CHECKING:
-    from ..ports.outbound import SummarizerPort
+    from ..ports.outbound import SummarizerPort, SummarySourceRendererPort
 
 
 class SummarizeArticleUseCase:
@@ -34,6 +33,7 @@ class SummarizeArticleUseCase:
     def __init__(
         self,
         summarizer: SummarizerPort | None,
+        summary_source_renderer: SummarySourceRendererPort,
         max_input_chars: int = 50_000,
     ):
         """
@@ -41,6 +41,7 @@ class SummarizeArticleUseCase:
             summarizer: 单一 DeepSeek 摘要器
         """
         self._summarizer = summarizer
+        self._summary_source_renderer = summary_source_renderer
         self._max_input_chars = max_input_chars
 
     def generation_conditions(self, max_length: int) -> dict[str, object]:
@@ -80,7 +81,7 @@ class SummarizeArticleUseCase:
         if summarizer is None or not summarizer.is_available():
             raise SummarizerNotAvailableError("DeepSeek 摘要器不可用")
 
-        summary_content = ArticleContent.from_text(SummarySourceRenderer().render(article))
+        summary_content = ArticleContent.from_text(self._summary_source_renderer.render(article))
         if len(summary_content.text) > self._max_input_chars:
             raise SummarizerTokenLimitError("文章过长，请使用分页 Markdown 阅读")
 

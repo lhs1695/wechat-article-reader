@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,6 +11,7 @@ from bs4 import BeautifulSoup
 from markdown_it import MarkdownIt
 from sqlalchemy import event
 
+from wechat_article_reader.application.use_cases.fetch_article import FetchArticleUseCase
 from wechat_article_reader.application.use_cases.summarize_article import SummarizeArticleUseCase
 from wechat_article_reader.domain.entities import Article, Summary
 from wechat_article_reader.domain.value_objects import ArticleContent, ArticleURL
@@ -17,7 +19,9 @@ from wechat_article_reader.features.article_reading import (
     ArticlePageSizeError,
     ArticleReadingProjector,
     ArticleReadingService,
+    ArticleStorageError,
     MarkdownReadingRenderer,
+    SummarySourceRenderer,
 )
 from wechat_article_reader.features.article_workflow import ArticleWorkflowService
 from wechat_article_reader.infrastructure.persistence import (
@@ -32,6 +36,7 @@ from wechat_article_reader.mcp.input_validator import MCPInputValidator, export_
 from wechat_article_reader.shared.exceptions import (
     ArticleVersionChangedError,
     OperationCancelledError,
+    StorageError,
 )
 from wechat_article_reader.shared.utils.article_identity import normalize_article_url
 
@@ -252,7 +257,9 @@ def test_summary_race_cannot_restore_old_body(storage):
 
     adapter = SimpleNamespace(is_available=lambda: True, summarize=summarize)
     workflow = ArticleWorkflowService(
-        SimpleNamespace(), SummarizeArticleUseCase(adapter), storage=storage
+        SimpleNamespace(),
+        SummarizeArticleUseCase(adapter, SummarySourceRenderer()),
+        storage=storage,
     )
     with pytest.raises(ArticleVersionChangedError):
         workflow.summarize_existing(item)
@@ -269,7 +276,7 @@ def test_html_only_update_does_not_rebind_existing_summary(storage):
     assert storage.get(item.id).summary is None
 
 
-def test_identical_summary_conditions_reuse_but_changed_length_regenerates(storage):
+def test_identical_summary_conditions_reuse_but_changed_length_regenerates(storage, monkeypatch):
     item = article("<p>测试正文</p>")
     storage.save(item)
     calls = []
@@ -282,14 +289,32 @@ def test_identical_summary_conditions_reuse_but_changed_length_regenerates(stora
         is_available=lambda: True, summarize=summarize, generation_profile={"model": "test"}
     )
     workflow = ArticleWorkflowService(
-        SimpleNamespace(), SummarizeArticleUseCase(adapter), storage=storage
+        SimpleNamespace(execute=lambda _url: item),
+        SummarizeArticleUseCase(adapter, SummarySourceRenderer()),
+        storage=storage,
     )
     first = workflow.summarize_existing(item)
-    second = workflow.summarize_existing(item)
+    # URL processing and the cached MCP path share the same persisted summary.
+    from_url = workflow.process(str(item.url))
+    second = workflow.summarize_cached(str(item.id))
     assert len(calls) == 1 and first.summary.generated_at == second.summary.generated_at
+    assert from_url.summary.generated_at == first.summary.generated_at
     workflow.summarize_existing(item, max_length=700)
     assert len(calls) == 2
     assert storage.get(item.id).summary.generation["max_length"] == 700
+    adapter.generation_profile = {"model": "test-v2"}
+    workflow.process(str(item.url))
+    assert len(calls) == 3
+    assert storage.get(item.id).summary.generation["model"] == "test-v2"
+    original_conditions = workflow._summarize_use_case.generation_conditions
+    monkeypatch.setattr(
+        workflow._summarize_use_case,
+        "generation_conditions",
+        lambda length: {**original_conditions(length), "prompt_version": "structured-v3"},
+    )
+    workflow.summarize_cached(str(item.id))
+    assert len(calls) == 4
+    assert storage.get(item.id).summary.generation["prompt_version"] == "structured-v3"
 
 
 def test_cancel_after_flush_rolls_back(storage):
@@ -301,12 +326,140 @@ def test_cancel_after_flush_rolls_back(storage):
 
     event.listen(storage.database.engine, "after_cursor_execute", cancel_after_sql)
     item = article("<p>不得写入</p>")
+    original_id = item.id
     try:
         with pytest.raises(OperationCancelledError):
             storage.save(item, cancel_event=signal)
     finally:
         event.remove(storage.database.engine, "after_cursor_execute", cancel_after_sql)
     assert storage.get(item.id) is None
+    assert item.id == original_id
+
+
+@pytest.mark.parametrize("failure_stage", ["flush", "commit"])
+@pytest.mark.parametrize("has_existing", [False, True])
+def test_failed_article_save_restores_entity_and_keeps_old_cache(
+    storage, monkeypatch, failure_stage, has_existing
+):
+    from wechat_article_reader.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+
+    old = article("<p>旧缓存</p>", title="旧标题")
+    updated = article("<p>新内容</p>", title="新标题")
+    updated.attach_summary(Summary("旧版摘要"))
+    if has_existing:
+        storage.save(old)
+    original_state = (
+        updated.id,
+        updated.revision,
+        updated.created_at,
+        updated.updated_at,
+        updated.summary,
+    )
+
+    if failure_stage == "flush":
+
+        def fail_article_write(
+            _connection, _cursor, statement, _parameters, _context, _executemany
+        ):
+            if statement.lstrip().upper().startswith(("INSERT INTO ARTICLES", "UPDATE ARTICLES")):
+                raise RuntimeError("injected flush failure")
+
+        event.listen(storage.database.engine, "before_cursor_execute", fail_article_write)
+    else:
+
+        def fail_commit(_self):
+            raise RuntimeError("injected commit failure")
+
+        monkeypatch.setattr(SqlAlchemyUnitOfWork, "commit", fail_commit)
+
+    try:
+        with pytest.raises(StorageError):
+            storage.save(updated)
+    finally:
+        if failure_stage == "flush":
+            event.remove(storage.database.engine, "before_cursor_execute", fail_article_write)
+
+    assert (
+        updated.id,
+        updated.revision,
+        updated.created_at,
+        updated.updated_at,
+        updated.summary,
+    ) == original_state
+    cached = storage.get_by_url(str(old.url))
+    if has_existing:
+        assert cached is not None
+        assert cached.title == "旧标题"
+        assert cached.content_text == "旧缓存"
+    else:
+        assert cached is None
+
+
+def test_concurrent_cold_fetches_share_one_cached_identity(storage):
+    from threading import Barrier
+
+    class ConcurrentScraper:
+        name = "concurrent"
+        barrier = Barrier(2)
+
+        def can_handle(self, url: ArticleURL) -> bool:
+            return url.is_wechat
+
+        def scrape(self, url: ArticleURL, *, cancel_event=None) -> Article:
+            self.barrier.wait(timeout=5)
+            return Article(
+                url=url, title="并发抓取", content=ArticleContent.from_html("<p>正文</p>")
+            )
+
+    use_case = FetchArticleUseCase(scrapers=[ConcurrentScraper()], storage=storage)
+    url = "https://mp.weixin.qq.com/s/contract"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        articles = list(executor.map(lambda _: use_case.execute(url), range(2)))
+
+    assert articles[0].id == articles[1].id
+    assert storage.get_by_url(url).id == articles[0].id
+    assert storage.get_stats().total_entries == 1
+
+
+def test_refresh_persistence_failure_is_not_reported_as_ingest_success(storage):
+    from wechat_article_reader.features.article_workflow import ArticleWorkflowService
+
+    previous = article("<p>持久化正文</p>", title="已缓存标题")
+    storage.save(previous)
+
+    class RefreshScraper:
+        name = "refresh"
+
+        def can_handle(self, url: ArticleURL) -> bool:
+            return url.is_wechat
+
+        def scrape(self, url: ArticleURL, *, cancel_event=None) -> Article:
+            return Article(
+                url=url,
+                title="未持久化的新标题",
+                content=ArticleContent.from_html("<p>新正文</p>"),
+            )
+
+    def fail_update(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("UPDATE ARTICLES"):
+            raise RuntimeError("injected flush failure")
+
+    fetch = FetchArticleUseCase(scrapers=[RefreshScraper()], storage=storage)
+    workflow = ArticleWorkflowService(fetch, summarize_use_case=None)
+    reading = ArticleReadingService(workflow, storage)
+    event.listen(storage.database.engine, "before_cursor_execute", fail_update)
+    try:
+        with pytest.raises(ArticleStorageError, match="写入 SQLite 缓存失败"):
+            reading.ingest(str(previous.url), refresh=True)
+    finally:
+        event.remove(storage.database.engine, "before_cursor_execute", fail_update)
+
+    current = storage.get_by_url(str(previous.url))
+    assert current is not None
+    assert current.id == previous.id
+    assert current.revision == previous.revision
+    assert current.title == "已缓存标题"
+    assert current.content_text == "持久化正文"
 
 
 @pytest.mark.asyncio

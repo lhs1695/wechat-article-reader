@@ -4,7 +4,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      - WECHAT_ARTICLE_READER_DEEPSEEK__MODEL=${WECHAT_ARTICLE_READER_DEEPSEEK__MODEL:-deepseek-v4-flash}
+      - PYTHONUTF8=1
+      - WECHAT_ARTICLE_READER_DEEPSEEK__MODEL=${WECHAT_ARTICLE_READER_DEEPSEEK__MODEL:-deepseek-flash}
       - WECHAT_ARTICLE_READER_EXPORT__DEFAULT_OUTPUT_DIR=/app/output
     volumes:
       - app-runtime:/app/.runtime

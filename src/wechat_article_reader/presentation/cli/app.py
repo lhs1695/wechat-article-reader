@@ -17,24 +17,11 @@ from rich.table import Table
 from ...features.article_reading.service import DEFAULT_READ_MAX_CHARS
 from ...infrastructure.config import get_container, get_settings
 from ...shared.constants import DEFAULT_MCP_HTTP_PORT, VERSION
+from ...shared.encoding import configure_utf8_stdio
 from ...shared.utils import setup_logger
 
 console = Console()
 EXPORT_CHOICES = ("html", "markdown")
-
-
-def _configure_utf8_standard_streams() -> None:
-    """Use UTF-8 at the CLI boundary without assuming a particular terminal."""
-
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if callable(reconfigure):
-            try:
-                reconfigure(encoding="utf-8", errors="backslashreplace")
-            except (OSError, ValueError):
-                # Embedded interpreters and test capture streams may not permit
-                # reconfiguration. Their existing encoding remains usable.
-                continue
 
 
 def _console_supports_unicode_progress(target_console: Console) -> bool:
@@ -58,16 +45,9 @@ def _create_single_progress(target_console: Console | None = None) -> Progress:
 
 
 def _console_safe_text(text: str, target_console: Console | None = None) -> str:
-    """Best-effort text sanitization for legacy console encodings."""
+    """Preserve Unicode text; entry points configure standard streams as UTF-8."""
 
-    active_console = target_console or console
-    encoding = getattr(active_console.file, "encoding", None) or sys.stdout.encoding or "utf-8"
-
-    try:
-        text.encode(encoding)
-        return text
-    except UnicodeEncodeError:
-        return text.encode(encoding, errors="replace").decode(encoding)
+    return text
 
 
 def _process_single(
@@ -114,7 +94,7 @@ def _process_single(
 @click.option("--debug", is_flag=True, help="启用调试模式")
 def cli(debug: bool):
     """微信公众号文章阅读与摘要服务 - 命令行工具"""
-    _configure_utf8_standard_streams()
+    configure_utf8_stdio()
     log_level = "DEBUG" if debug else "INFO"
     setup_logger(level=log_level)
 
@@ -766,7 +746,7 @@ def _display_article(article):
 
 def run_cli():
     """运行CLI"""
-    _configure_utf8_standard_streams()
+    configure_utf8_stdio()
     cli()
 
 

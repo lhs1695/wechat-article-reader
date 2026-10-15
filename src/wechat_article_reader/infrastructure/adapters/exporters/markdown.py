@@ -1,8 +1,12 @@
 """Markdown导出器"""
 
 import json
+import os
+import shutil
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from threading import Event
 
 from loguru import logger
@@ -12,10 +16,15 @@ from ....domain.entities import Article
 from ....features.article_reading import ArticleReadingProjector, MarkdownReadingRenderer
 from ....features.article_reading.dto import ArticleReadingProjection
 from ....features.article_reading.images import article_images, local_image_projection
-from ....features.article_reading.projection import escape_markdown_text, markdown_destination
+from ....features.article_reading.projection import (
+    PROJECTION_FORMAT_VERSION,
+    escape_markdown_text,
+    markdown_destination,
+)
 from ....shared.exceptions import ExporterError, OperationCancelledError
 from ..image_assets import atomic_write_bytes
 from .base import BaseExporter
+from .path_lock import export_path_lock
 
 
 def _escape_yaml_value(value: str) -> str:
@@ -25,6 +34,54 @@ def _escape_yaml_value(value: str) -> str:
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
     )
+
+
+def _export_snapshot_metadata(
+    article: Article, options: dict[str, object], markdown_content: str
+) -> dict[str, object]:
+    snapshot: dict[str, object] = {
+        "article_id": str(article.id),
+        "revision": article.revision,
+        "url": str(article.url),
+        "projection_version": PROJECTION_FORMAT_VERSION,
+        "options": options,
+        "markdown_sha256": sha256(markdown_content.encode("utf-8")).hexdigest(),
+    }
+    snapshot_id = sha256(
+        json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    snapshot["snapshot_id"] = snapshot_id
+    return snapshot
+
+
+def _with_snapshot_marker(markdown_content: str, snapshot: dict[str, object]) -> str:
+    marker = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"{markdown_content}\n\n<!-- wechat-article-reader-export: {marker} -->\n"
+
+
+def _stage_text(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+        return temporary
+    except Exception:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise
 
 
 class MarkdownExporter(BaseExporter):
@@ -69,39 +126,138 @@ class MarkdownExporter(BaseExporter):
             output_path = self._output_dir / self._generate_filename(article)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        with export_path_lock(output_path):
+            return self._export_snapshot(article, output_path, options)
 
-        # 生成Markdown内容
+    def _export_snapshot(
+        self, article: Article, output_path: Path, options: dict[str, object]
+    ) -> str:
+        snapshot_article = replace(article)
         download_images = options.get("download_images", False)
         if type(download_images) is not bool:
             raise ValueError("download_images must be a boolean")
-        if download_images and not options.get("include_body", True):
+        include_body = options.get("include_body", True)
+        if type(include_body) is not bool:
+            raise ValueError("include_body must be a boolean")
+        include_images = options.get("include_images", False)
+        if include_images is None:
+            include_images = False
+        if type(include_images) is not bool:
+            raise ValueError("include_images must be a boolean")
+        if download_images and not include_body:
             raise ValueError("下载图片需要 include_body=true")
-        if download_images:
-            projection = ArticleReadingProjector().project(article)
-            projection, manifest, failures = self._download_images(
-                article, projection, output_path, options.get("cancel_event")
-            )
-            options["projection"] = projection
-            options["image_failures"] = failures
-            # Publish the manifest before Markdown so every local reference exists.
-            self._atomic_write_text(
-                output_path.with_suffix(".assets") / "manifest.json",
-                json.dumps(manifest, ensure_ascii=False, indent=2),
-                cancel_event=options.get("cancel_event"),
-            )
-        md_content = self._generate_markdown(article, **options)
+        for key, default in (("include_summary", True), ("include_frontmatter", True)):
+            if type(options.get(key, default)) is not bool:
+                raise ValueError(f"{key} must be a boolean")
+        include_summary = options.get("include_summary", True)
+        include_frontmatter = options.get("include_frontmatter", True)
+        cancel_event = options.get("cancel_event")
+        if cancel_event is not None and not isinstance(cancel_event, Event):
+            raise ValueError("cancel_event must be a threading.Event")
 
-        # 写入文件
-        try:
-            self._atomic_write_text(
-                output_path, md_content, cancel_event=options.get("cancel_event")
+        snapshot_options = {
+            "include_body": include_body,
+            "include_images": include_images,
+            "download_images": download_images,
+            "include_summary": include_summary,
+            "include_frontmatter": include_frontmatter,
+        }
+        projection = ArticleReadingProjector().project(snapshot_article) if include_body else None
+        manifest: dict[str, object] | None = None
+        failures: list[str] = []
+        if download_images:
+            assert projection is not None
+            projection, manifest, failures = self._download_images(
+                snapshot_article, projection, output_path, cancel_event
             )
+        md_options = dict(options)
+        md_options.update(
+            include_body=include_body,
+            include_images=include_images,
+            projection=projection,
+            image_failures=failures,
+        )
+        md_content = self._generate_markdown(snapshot_article, **md_options)
+
+        try:
+            if download_images:
+                assert manifest is not None
+                snapshot = _export_snapshot_metadata(snapshot_article, snapshot_options, md_content)
+                manifest["snapshot"] = snapshot
+                manifest_content = json.dumps(manifest, ensure_ascii=False, indent=2)
+                markdown_content = _with_snapshot_marker(md_content, snapshot)
+                self._publish_markdown_manifest(
+                    output_path,
+                    markdown_content,
+                    output_path.with_suffix(".assets") / "manifest.json",
+                    manifest_content,
+                    cancel_event,
+                )
+            else:
+                self._atomic_write_text(
+                    output_path,
+                    md_content,
+                    cancel_event=cancel_event,
+                )
             logger.info(f"Markdown导出成功: {output_path}")
             return str(output_path)
         except OperationCancelledError:
             raise
         except Exception as e:
             raise ExporterError(f"Markdown导出失败: {e}") from e
+
+    @staticmethod
+    def _publish_markdown_manifest(
+        markdown_path: Path,
+        markdown_content: str,
+        manifest_path: Path,
+        manifest_content: str,
+        cancel_event: Event | None,
+    ) -> None:
+        """Stage both files, then publish with rollback if Markdown replacement fails."""
+        staged_paths: list[Path] = []
+        manifest_backup: Path | None = None
+        manifest_published = False
+        preserve_backup = False
+        try:
+            markdown_stage = _stage_text(markdown_path, markdown_content)
+            staged_paths.append(markdown_stage)
+            manifest_stage = _stage_text(manifest_path, manifest_content)
+            staged_paths.append(manifest_stage)
+            if manifest_path.is_file():
+                with NamedTemporaryFile(
+                    dir=manifest_path.parent,
+                    prefix=f".{manifest_path.name}.",
+                    suffix=".bak",
+                    delete=False,
+                ) as stream:
+                    manifest_backup = Path(stream.name)
+                shutil.copy2(manifest_path, manifest_backup)
+            if cancel_event is not None and cancel_event.is_set():
+                raise OperationCancelledError()
+            os.replace(manifest_stage, manifest_path)
+            manifest_published = True
+            os.replace(markdown_stage, markdown_path)
+        except Exception as exc:
+            if manifest_published:
+                try:
+                    if manifest_backup is None:
+                        manifest_path.unlink(missing_ok=True)
+                    else:
+                        os.replace(manifest_backup, manifest_path)
+                        manifest_backup = None
+                except OSError as rollback_error:
+                    preserve_backup = manifest_backup is not None
+                    raise ExporterError(
+                        f"Markdown 发布失败且 manifest 回滚失败: {rollback_error}; "
+                        f"旧清单备份保留于 {manifest_backup}"
+                    ) from exc
+            raise
+        finally:
+            for staged_path in staged_paths:
+                staged_path.unlink(missing_ok=True)
+            if manifest_backup is not None and not preserve_backup:
+                manifest_backup.unlink(missing_ok=True)
 
     def _generate_filename(self, article: Article) -> str:
         """生成文件名"""

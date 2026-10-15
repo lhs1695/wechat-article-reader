@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from wechat_article_reader.application.use_cases.export_article import ExportArticleUseCase
 from wechat_article_reader.domain.entities import Article
 from wechat_article_reader.domain.value_objects import ArticleContent, ArticleURL
+from wechat_article_reader.features.article_workflow import ArticleWorkflowService
 from wechat_article_reader.infrastructure.adapters.exporters.html import HtmlExporter
 from wechat_article_reader.infrastructure.adapters.exporters.markdown import MarkdownExporter
 
@@ -102,3 +104,40 @@ def test_markdown_export_defaults_to_no_images_and_no_body_wrapper(tmp_path: Pat
 
     assert first_path != second_path
     assert first_path.read_text(encoding="utf-8") != second_path.read_text(encoding="utf-8")
+
+
+def test_batch_export_creates_nonexistent_output_directory(tmp_path: Path) -> None:
+    articles = {
+        "https://mp.weixin.qq.com/s/first": Article(
+            url=ArticleURL.from_string("https://mp.weixin.qq.com/s/first"),
+            title="同名文章",
+            content=ArticleContent.from_text("第一篇内容"),
+        ),
+        "https://mp.weixin.qq.com/s/second": Article(
+            url=ArticleURL.from_string("https://mp.weixin.qq.com/s/second"),
+            title="同名文章",
+            content=ArticleContent.from_text("第二篇内容"),
+        ),
+    }
+
+    class FetchUseCase:
+        def execute(self, url: str):
+            return articles[url]
+
+    output_dir = tmp_path / "new" / "batch-output"
+    workflow = ArticleWorkflowService(
+        FetchUseCase(),
+        summarize_use_case=None,
+        export_use_case=ExportArticleUseCase({"markdown": MarkdownExporter()}),
+    )
+
+    result = workflow.batch_process(
+        list(articles), summarize=False, target="markdown", path=str(output_dir)
+    )
+
+    assert output_dir.is_dir()
+    assert all(item.success and item.result is not None for item in result.results)
+    paths = [Path(item.result.export_path) for item in result.results]
+    assert len(set(paths)) == 2
+    assert "第一篇内容" in paths[0].read_text(encoding="utf-8")
+    assert "第二篇内容" in paths[1].read_text(encoding="utf-8")

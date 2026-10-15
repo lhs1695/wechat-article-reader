@@ -17,6 +17,8 @@ from ...shared.utils.article_identity import normalize_section_title
 from ...shared.utils.html_safety import preserve_style_semantics
 from .dto import ArticleReadingProjection, ReadingBlock, ReadingLink, ReadingSection
 
+PROJECTION_FORMAT_VERSION = 1
+
 _CONTAINER_TAGS = {"article", "div", "main", "section"}
 _TEXT_BLOCK_TYPES = {"heading", "paragraph", "list_item", "quote", "code", "table"}
 _MAX_BLOCK_CHARS = 900

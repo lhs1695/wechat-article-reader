@@ -175,7 +175,7 @@ def migrate_legacy_config() -> bool:
                         shutil.copytree(item, dest)
 
         # 创建迁移标记
-        migration_marker.write_text(str(legacy_dir))
+        migration_marker.write_text(str(legacy_dir), encoding="utf-8")
 
         logger.info("Migration completed successfully")
         return True

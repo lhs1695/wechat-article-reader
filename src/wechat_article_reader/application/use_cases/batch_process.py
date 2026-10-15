@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 from loguru import logger
 
@@ -98,6 +99,10 @@ class BatchProcessUseCase:
             导出结果列表
         """
         results = []
+        if output_dir is not None:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            if not Path(output_dir).is_dir():
+                raise ValueError("批量导出 output_dir 必须是目录")
 
         for article in articles:
             try:

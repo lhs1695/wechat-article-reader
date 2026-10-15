@@ -9,13 +9,11 @@ from typing import TYPE_CHECKING, Any, Self
 
 from loguru import logger
 
-from ...application.use_cases import (
-    BatchProcessUseCase,
-    ExportArticleUseCase,
-    FetchArticleUseCase,
-    SummarizeArticleUseCase,
-)
-from ...features.article_reading import ArticleReadingService
+from ...application.use_cases.batch_process import BatchProcessUseCase
+from ...application.use_cases.export_article import ExportArticleUseCase
+from ...application.use_cases.fetch_article import FetchArticleUseCase
+from ...application.use_cases.summarize_article import SummarizeArticleUseCase
+from ...features.article_reading import ArticleReadingService, SummarySourceRenderer
 from ...features.article_workflow import ArticleWorkflowService
 from .assembly import (
     build_exporters,
@@ -139,6 +137,7 @@ class Container:
                 if self._summarize_use_case is None:
                     self._summarize_use_case = SummarizeArticleUseCase(
                         self.summarizers.get("deepseek"),
+                        summary_source_renderer=SummarySourceRenderer(),
                         max_input_chars=self.settings.deepseek.max_input_chars,
                     )
         return self._summarize_use_case

@@ -7,10 +7,12 @@
 
 import sys
 
+from .shared.encoding import configure_utf8_stdio
 from .shared.utils import setup_logger
 
 
 def main() -> None:
+    configure_utf8_stdio()
     if len(sys.argv) <= 1:
         setup_logger()
         _run_web()

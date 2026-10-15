@@ -13,6 +13,7 @@ from wechat_article_reader.features.article_reading import (
     ArticleStorageError,
     MarkdownReadingRenderer,
 )
+from wechat_article_reader.shared.exceptions import ArticlePersistenceError
 
 
 def _article(html: str, title: str = "阅读测试") -> Article:
@@ -54,12 +55,26 @@ class _Storage:
 
 
 class _Workflow:
-    def __init__(self, article: Article) -> None:
+    def __init__(self, article: Article, storage: _Storage | None = None) -> None:
         self.article = article
+        self.storage = storage
         self.calls: list[tuple[str, bool]] = []
 
-    def fetch_article(self, url: str, *, force_refresh: bool = False) -> Article:
+    def fetch_article(
+        self,
+        url: str,
+        *,
+        force_refresh: bool = False,
+        cancel_event=None,
+    ) -> Article:
         self.calls.append((url, force_refresh))
+        if self.storage is not None:
+            try:
+                self.storage.save(self.article)
+            except Exception as exc:
+                raise ArticlePersistenceError(
+                    "文章抓取成功，但写入 SQLite 缓存失败；请检查数据库状态后重试"
+                ) from exc
         return self.article
 
     def export_existing(
@@ -300,7 +315,7 @@ def test_ingest_uses_cache_and_refresh_preserves_article_id() -> None:
     cached = _article("<p>旧内容</p>")
     refreshed = _article("<p>新内容</p>")
     storage = _Storage(cached)
-    workflow = _Workflow(refreshed)
+    workflow = _Workflow(refreshed, storage)
     service = ArticleReadingService(workflow, storage)
 
     cached_result = service.ingest(str(cached.url))
@@ -341,9 +356,10 @@ def test_reading_hash_changes_when_only_link_or_image_changes() -> None:
 
 def test_ingest_fails_when_durable_storage_fails() -> None:
     article = _article("<p>内容</p>")
-    service = ArticleReadingService(_Workflow(article), _Storage(fail_save=True))
+    storage = _Storage(fail_save=True)
+    service = ArticleReadingService(_Workflow(article, storage), storage)
 
-    with pytest.raises(ArticleStorageError, match="持久化失败"):
+    with pytest.raises(ArticleStorageError, match="写入 SQLite 缓存失败"):
         service.ingest(str(article.url))
 
 
@@ -381,7 +397,8 @@ def test_read_prefers_breaking_before_nested_heading() -> None:
 
 def test_ingest_toc_defaults_to_h2_and_can_expand() -> None:
     article = _article("<h2>一部</h2><p>甲</p><h3>细目</h3><p>乙</p><h2>二部</h2><p>丙</p>")
-    service = ArticleReadingService(_Workflow(article), _Storage(article))
+    storage = _Storage(article)
+    service = ArticleReadingService(_Workflow(article, storage), storage)
 
     compact = service.ingest(str(article.url))
     detailed = service.ingest(str(article.url), toc_level=3)
@@ -396,7 +413,8 @@ def test_ingest_toc_aligns_to_shallowest_heading_when_article_has_no_h2() -> Non
     article = _article(
         "<h3>一、背景</h3><p>甲</p><h4>1.1 细节</h4><p>乙</p><h3>二、方案</h3><p>丙</p>"
     )
-    service = ArticleReadingService(_Workflow(article), _Storage(article))
+    storage = _Storage(article)
+    service = ArticleReadingService(_Workflow(article, storage), storage)
 
     result = service.ingest(str(article.url))
 
@@ -408,7 +426,8 @@ def test_ingest_toc_aligns_to_shallowest_heading_when_article_has_no_h2() -> Non
 
 def test_leading_copy_before_h3_is_preamble_not_whole_article() -> None:
     article = _article("<p>开场</p><h3>一、背景</h3><p>甲</p>")
-    service = ArticleReadingService(_Workflow(article), _Storage(article))
+    storage = _Storage(article)
+    service = ArticleReadingService(_Workflow(article, storage), storage)
 
     result = service.ingest(str(article.url))
 

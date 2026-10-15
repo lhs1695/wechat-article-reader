@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from ...application.ports.outbound.image_asset_port import ImageAsset, ImageAssetPort
-from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
+from ...shared.exceptions import (
+    ArticlePersistenceError,
+    ArticleVersionChangedError,
+    OperationCancelledError,
+)
 from ...shared.utils.article_identity import normalize_section_title
 from .dto import (
     ArticleExportResult,
@@ -232,22 +236,17 @@ class ArticleReadingService:
         if cached:
             persisted = existing
         else:
-            article = self._workflow.fetch_article(
-                url,
-                force_refresh=refresh,
-                **({"cancel_event": cancel_event} if cancel_event is not None else {}),
-            )
             try:
-                _check_cancelled(cancel_event)
-                current = storage.get(article.id)
-                if current is None:
-                    storage.save(
-                        article,
-                        **({"cancel_event": cancel_event} if cancel_event is not None else {}),
-                    )
-                persisted = storage.get(article.id)
-            except OperationCancelledError:
-                raise
+                self._workflow.fetch_article(
+                    url,
+                    force_refresh=refresh,
+                    **({"cancel_event": cancel_event} if cancel_event is not None else {}),
+                )
+            except ArticlePersistenceError as exc:
+                raise ArticleStorageError(str(exc)) from exc
+            _check_cancelled(cancel_event)
+            try:
+                persisted = storage.get_by_url(url)
             except Exception as exc:
                 raise ArticleStorageError("文章持久化失败") from exc
         if persisted is None:

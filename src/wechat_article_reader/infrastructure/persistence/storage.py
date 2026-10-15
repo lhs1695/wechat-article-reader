@@ -32,18 +32,35 @@ class SqlAlchemyStorage:
         self.database = database
 
     def save(self, article: Article, *, cancel_event: Event | None = None) -> None:
-        try:
-            with self._uow() as uow:
-                if cancel_event is not None and cancel_event.is_set():
-                    raise OperationCancelledError()
-                uow.articles.save(article)
-                if cancel_event is not None and cancel_event.is_set():
-                    raise OperationCancelledError()
-                uow.commit()
-        except (ArticleVersionChangedError, OperationCancelledError):
-            raise
-        except Exception as exc:
-            raise StorageError(f"保存失败: {exc}") from exc
+        original_state = (
+            article.id,
+            article.revision,
+            article.created_at,
+            article.updated_at,
+            article.summary,
+        )
+        with self.database.write_lock:
+            try:
+                with self._uow() as uow:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise OperationCancelledError()
+                    uow.articles.save(article)
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise OperationCancelledError()
+                    uow.commit()
+            except (ArticleVersionChangedError, OperationCancelledError):
+                self._restore_article(article, original_state)
+                raise
+            except Exception as exc:
+                self._restore_article(article, original_state)
+                raise StorageError(f"保存失败: {exc}") from exc
+
+    @staticmethod
+    def _restore_article(article: Article, state: tuple[object, ...]) -> None:
+        for name, value in zip(
+            ("id", "revision", "created_at", "updated_at", "summary"), state, strict=True
+        ):
+            object.__setattr__(article, name, value)
 
     def save_summary(
         self,

@@ -10,6 +10,7 @@ from loguru import logger
 from ...domain.entities import Article
 from ...domain.value_objects import ArticleURL
 from ...shared.exceptions import (
+    ArticlePersistenceError,
     InvalidURLError,
     OperationCancelledError,
     ScraperError,
@@ -151,4 +152,7 @@ class FetchArticleUseCase:
         except OperationCancelledError:
             raise
         except Exception as e:
-            logger.warning(f"缓存写入失败，忽略: {e}")
+            logger.warning("缓存写入失败 error_type={}", type(e).__name__)
+            raise ArticlePersistenceError(
+                "文章抓取成功，但写入 SQLite 缓存失败；请检查数据库状态后重试"
+            ) from e

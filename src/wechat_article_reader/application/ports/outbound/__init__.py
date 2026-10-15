@@ -5,6 +5,7 @@ from .repository import ArticleRepository, UnitOfWork
 from .scraper_port import AsyncScraperPort, ScraperPort
 from .storage_port import StoragePort
 from .summarizer_port import SummarizerPort
+from .summary_source_renderer import SummarySourceRendererPort
 
 __all__ = [
     "ArticleRepository",
@@ -14,5 +15,6 @@ __all__ = [
     "ScraperPort",
     "StoragePort",
     "SummarizerPort",
+    "SummarySourceRendererPort",
     "UnitOfWork",
 ]

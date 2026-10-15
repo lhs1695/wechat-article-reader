@@ -32,6 +32,8 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         需要更细的纲时再提高 toc_level。篇幅不超过 read_article 的 max_chars 时一次读完。
         更长的文章按 sections 标题或 start_cursor 跳读（父章节包含子章节）；
         节内仍超长时跟随 next_read。完整图文理解需另用 read_article_image 核对配图。
+        只需文章概览时，可把返回的 article_id 交给 summarize_article 生成文字摘要；
+        该工具不抓取文章，也不代替 read_article 的原文分页阅读。
         """
         try:
             if not isinstance(refresh, bool):

@@ -13,6 +13,7 @@ from .outbound import (
     ScraperPort,
     StoragePort,
     SummarizerPort,
+    SummarySourceRendererPort,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "ScraperPort",
     "StoragePort",
     "SummarizerPort",
+    "SummarySourceRendererPort",
 ]

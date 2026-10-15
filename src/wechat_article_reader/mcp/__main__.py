@@ -9,10 +9,12 @@ import argparse
 import os
 
 from ..shared.constants import DEFAULT_MCP_HTTP_PORT
+from ..shared.encoding import configure_utf8_stdio
 from .server import run_mcp_server
 
 
 def main():
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(description="微信公众号文章阅读服务 - MCP 服务器")
     parser.add_argument(
         "--transport",

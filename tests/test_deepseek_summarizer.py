@@ -7,6 +7,7 @@ import pytest
 
 from wechat_article_reader.application.use_cases.summarize_article import SummarizeArticleUseCase
 from wechat_article_reader.domain.value_objects import ArticleContent
+from wechat_article_reader.features.article_reading import SummarySourceRenderer
 from wechat_article_reader.infrastructure.adapters.summarizers.deepseek import DeepSeekSummarizer
 from wechat_article_reader.shared.exceptions import (
     OperationCancelledError,
@@ -152,7 +153,7 @@ def test_deepseek_retries_transient_error(monkeypatch) -> None:
 
 def test_summary_rejects_unavailable_summarizer(sample_article) -> None:
     summarizer = SimpleNamespace(is_available=lambda: False)
-    use_case = SummarizeArticleUseCase(summarizer)
+    use_case = SummarizeArticleUseCase(summarizer, SummarySourceRenderer())
     with pytest.raises(SummarizerNotAvailableError):
         use_case.execute(sample_article)
 
@@ -163,7 +164,7 @@ def test_summary_rejects_overlong_article_without_calling_model(sample_article) 
     )
     article = sample_article
     object.__setattr__(article, "content", ArticleContent.from_text("x" * 2_000))
-    use_case = SummarizeArticleUseCase(summarizer, max_input_chars=1_000)
+    use_case = SummarizeArticleUseCase(summarizer, SummarySourceRenderer(), max_input_chars=1_000)
     with pytest.raises(SummarizerTokenLimitError, match="文章过长"):
         use_case.execute(article)
 
@@ -196,7 +197,7 @@ def test_summary_failure_logs_error_type_not_model_body(
             raise RuntimeError(secret)
 
     with pytest.raises(UseCaseError) as err:
-        SummarizeArticleUseCase(_Fail()).execute(sample_article)
+        SummarizeArticleUseCase(_Fail(), SummarySourceRenderer()).execute(sample_article)
 
     joined = " ".join(captured)
     message = str(err.value)

@@ -189,6 +189,10 @@ class UseCaseError(ApplicationError):
     """用例执行异常"""
 
 
+class ArticlePersistenceError(UseCaseError):
+    """抓取后的文章未能成功持久化。"""
+
+
 class ValidationError(ApplicationError):
     """验证异常"""
 
