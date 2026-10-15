@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from bs4 import BeautifulSoup
+
 from wechat_article_reader.application.use_cases.export_article import ExportArticleUseCase
 from wechat_article_reader.domain.entities import Article
 from wechat_article_reader.domain.value_objects import ArticleContent, ArticleURL
@@ -40,6 +42,48 @@ def test_html_exporter_escapes_title_and_raw_html(tmp_path: Path) -> None:
     assert "onerror" not in output
     assert "onload" not in output
     assert "&lt;/title&gt;" in output
+
+
+def test_html_exporter_renders_simple_tables_as_html_tables(tmp_path: Path) -> None:
+    article = Article(
+        url=ArticleURL.from_string("https://mp.weixin.qq.com/s/table"),
+        title="表格文章",
+        content=ArticleContent.from_html(
+            "<table><tr><th>项目</th><th>值</th></tr><tr><td>次数</td><td>3</td></tr></table>"
+        ),
+    )
+
+    output = Path(HtmlExporter(output_dir=str(tmp_path)).export(article)).read_text(
+        encoding="utf-8"
+    )
+    dom = BeautifulSoup(output, "html.parser")
+
+    assert [cell.get_text() for cell in dom.select("table th")] == ["项目", "值"]
+    assert [cell.get_text() for cell in dom.select("table td")] == ["次数", "3"]
+
+
+def test_html_exporter_preserves_safe_complex_tables_and_sanitizes_html(tmp_path: Path) -> None:
+    article = Article(
+        url=ArticleURL.from_string("https://mp.weixin.qq.com/s/complex-table"),
+        title="复杂表格",
+        content=ArticleContent.from_html(
+            '<table onclick="evil()"><tr><th colspan="2">分组</th></tr>'
+            '<tr><td rowspan="2"><strong>甲</strong></td><td>乙</td></tr>'
+            "<tr><td><script>alert(1)</script>丙</td></tr></table>"
+        ),
+    )
+
+    output = Path(HtmlExporter(output_dir=str(tmp_path)).export(article)).read_text(
+        encoding="utf-8"
+    )
+    dom = BeautifulSoup(output, "html.parser")
+
+    assert dom.th["colspan"] == "2"
+    assert dom.td["rowspan"] == "2"
+    assert dom.strong.get_text() == "甲"
+    assert "丙" in dom.table.get_text()
+    assert not dom.table.has_attr("onclick")
+    assert dom.script is None
 
 
 def test_exporters_create_parent_for_explicit_file_path(tmp_path: Path) -> None:

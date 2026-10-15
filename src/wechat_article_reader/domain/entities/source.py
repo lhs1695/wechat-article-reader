@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 
 from ..value_objects import ContentNote
+
+WECHAT_PUBLISH_TIME_TIMEZONE = "Asia/Shanghai"
+# WeChat publication times use UTC+08:00; a fixed offset avoids a system tzdata dependency.
+WECHAT_PUBLISH_TIME_TZ = timezone(timedelta(hours=8), WECHAT_PUBLISH_TIME_TIMEZONE)
 
 
 class SourceType(StrEnum):
@@ -32,6 +36,7 @@ class ArticleSource:
     scraped_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     scraper_name: str = "unknown"
     content_notes: tuple[ContentNote, ...] = ()
+    publish_time_timezone: str | None = None
 
     @classmethod
     def wechat(
@@ -39,6 +44,7 @@ class ArticleSource:
         account_name: str,
         account_id: str | None = None,
         content_notes: tuple[ContentNote, ...] = (),
+        publish_time_timezone: str | None = None,
     ) -> ArticleSource:
         """创建微信公众号来源"""
         return cls(
@@ -48,4 +54,5 @@ class ArticleSource:
             account_name=account_name,
             scraper_name="wechat_scraper",
             content_notes=content_notes,
+            publish_time_timezone=publish_time_timezone,
         )

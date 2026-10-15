@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from bs4 import BeautifulSoup
 
 from wechat_article_reader.domain.value_objects import ArticleURL
 from wechat_article_reader.infrastructure.adapters.scrapers.wechat_httpx import WechatHttpxScraper
@@ -276,4 +277,25 @@ def test_parses_localized_publish_time(scraper: WechatHttpxScraper) -> None:
     ):
         article = scraper.scrape(ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"))
 
-    assert article.publish_time == datetime(2024, 1, 15, 10, 30)
+    assert article.publish_time == datetime(
+        2024, 1, 15, 10, 30, tzinfo=timezone(timedelta(hours=8), "Asia/Shanghai")
+    )
+    assert article.source is not None
+    assert article.source.publish_time_timezone == "Asia/Shanghai"
+
+
+def test_parses_unix_publish_timestamp_independent_of_host_timezone(
+    scraper: WechatHttpxScraper,
+) -> None:
+    soup = BeautifulSoup("<div id='js_content'>正文</div>", "html.parser")
+    unix_timestamp = int(datetime(2024, 1, 15, 2, 30, tzinfo=UTC).timestamp())
+
+    parsed = scraper._extract_publish_time(
+        soup,
+        f'<script>var create_time = "{unix_timestamp}";</script>',
+    )
+
+    assert parsed == datetime(
+        2024, 1, 15, 10, 30, tzinfo=timezone(timedelta(hours=8), "Asia/Shanghai")
+    )
+    assert parsed.utcoffset() == timedelta(hours=8)

@@ -12,7 +12,12 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from ...domain.entities import Article
-from ...domain.entities.source import ArticleSource, SourceType
+from ...domain.entities.source import (
+    WECHAT_PUBLISH_TIME_TIMEZONE,
+    WECHAT_PUBLISH_TIME_TZ,
+    ArticleSource,
+    SourceType,
+)
 from ...domain.entities.summary import Summary
 from ...domain.value_objects import ArticleContent, ArticleURL, ContentNote
 from ...shared.exceptions import ArticleVersionChangedError
@@ -28,6 +33,31 @@ def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _publish_time_for_storage(article: Article) -> datetime | None:
+    value = article.publish_time
+    if value is None:
+        return None
+    if (
+        article.source is None
+        or article.source.publish_time_timezone != WECHAT_PUBLISH_TIME_TIMEZONE
+    ):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=WECHAT_PUBLISH_TIME_TZ)
+    return _utc(value).replace(tzinfo=None)
+
+
+def _publish_time_from_storage(
+    value: datetime | None, source: ArticleSource | None
+) -> datetime | None:
+    if value is None:
+        return None
+    if source is not None and source.publish_time_timezone == WECHAT_PUBLISH_TIME_TIMEZONE:
+        return _utc(value).astimezone(WECHAT_PUBLISH_TIME_TZ)
+    # Legacy rows have no reliable timezone provenance. Preserve their previous UTC assumption.
+    return _utc(value)
 
 
 class SqlAlchemyArticleRepository:
@@ -65,7 +95,7 @@ class SqlAlchemyArticleRepository:
         model.title = article.title
         model.author = article.author
         model.account_name = article.account_name
-        model.publish_time = article.publish_time
+        model.publish_time = _publish_time_for_storage(article)
         model.content_html = article.content_html
         model.content_text = article.content_text
         model.images_json = json.dumps(
@@ -143,6 +173,7 @@ class SqlAlchemyArticleRepository:
         model.generation_json = json.dumps(summary.generation, ensure_ascii=False)
 
     def _to_domain(self, model: ArticleModel) -> Article:
+        source = self._deserialize_source(model.source_json)
         article = Article(
             id=UUID(model.id),
             revision=model.revision,
@@ -150,13 +181,13 @@ class SqlAlchemyArticleRepository:
             title=model.title,
             author=model.author,
             account_name=model.account_name,
-            publish_time=_utc(model.publish_time) if model.publish_time else None,
+            publish_time=_publish_time_from_storage(model.publish_time, source),
             content=ArticleContent(
                 html=model.content_html,
                 text=model.content_text,
                 images=tuple(json.loads(model.images_json)),
             ),
-            source=self._deserialize_source(model.source_json),
+            source=source,
             created_at=_utc(model.created_at),
             updated_at=_utc(model.updated_at),
         )

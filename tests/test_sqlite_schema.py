@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine, text
 
-from wechat_article_reader.domain.entities import Summary
-from wechat_article_reader.domain.value_objects import ArticleContent
+from wechat_article_reader.domain.entities import Article, ArticleSource, Summary
+from wechat_article_reader.domain.value_objects import ArticleContent, ArticleURL
 from wechat_article_reader.infrastructure.persistence import (
     Database,
     SqlAlchemyStorage,
@@ -49,6 +51,54 @@ def test_refreshed_content_does_not_load_stale_summary(tmp_path, sample_article)
     refreshed = storage.get(sample_article.id)
     assert refreshed is not None
     assert refreshed.summary is None
+
+
+def test_new_publish_times_round_trip_in_source_timezone_without_shifting_legacy(
+    tmp_path,
+) -> None:
+    from wechat_article_reader.infrastructure.persistence.models import ArticleModel
+
+    path = tmp_path / "publish-time.db"
+    upgrade_database(path)
+    database = Database(path)
+    storage = SqlAlchemyStorage(database)
+    source_zone = timezone(timedelta(hours=8), "Asia/Shanghai")
+    new_article = Article(
+        url=ArticleURL.from_string("https://mp.weixin.qq.com/s/new-time"),
+        title="新时间语义",
+        publish_time=datetime(2024, 1, 15, 10, 30, tzinfo=source_zone),
+        content=ArticleContent.from_text("正文"),
+        source=ArticleSource.wechat("公众号", publish_time_timezone="Asia/Shanghai"),
+    )
+    legacy_article = Article(
+        url=ArticleURL.from_string("https://mp.weixin.qq.com/s/legacy-time"),
+        title="历史时间语义",
+        publish_time=datetime(2024, 1, 15, 10, 30),
+        content=ArticleContent.from_text("正文"),
+        source=ArticleSource.wechat("旧公众号"),
+    )
+
+    try:
+        storage.save(new_article)
+        storage.save(legacy_article)
+        # Emulate source JSON written before publish_time_timezone was introduced.
+        with database.session_factory.begin() as session:
+            model = session.get(ArticleModel, str(legacy_article.id))
+            assert model is not None and model.source_json is not None
+            source_data = json.loads(model.source_json)
+            source_data.pop("publish_time_timezone", None)
+            model.source_json = json.dumps(source_data)
+
+        new_loaded = storage.get(new_article.id)
+        legacy_loaded = storage.get(legacy_article.id)
+        assert new_loaded is not None and new_loaded.publish_time is not None
+        assert legacy_loaded is not None and legacy_loaded.publish_time is not None
+        assert new_loaded.publish_time == datetime(2024, 1, 15, 10, 30, tzinfo=source_zone)
+        assert new_loaded.publish_time_str == "2024-01-15 10:30:00"
+        assert legacy_loaded.publish_time == datetime(2024, 1, 15, 10, 30, tzinfo=UTC)
+        assert legacy_loaded.publish_time_str == "2024-01-15 10:30:00"
+    finally:
+        database.dispose()
 
 
 def test_legacy_migration_preserves_ids_and_canonicalizes_query_order(tmp_path):

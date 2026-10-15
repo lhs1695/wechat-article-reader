@@ -95,7 +95,7 @@ class HtmlExporter(BaseExporter):
         try:
             from markdown_it import MarkdownIt
 
-            md_parser = MarkdownIt("commonmark", {"html": False})
+            md_parser = MarkdownIt("commonmark", {"html": True}).enable("table")
             body_html = sanitize_html(md_parser.render(md_body))
         except ImportError:
             body_html = f"<pre>{escape(md_content)}</pre>"

@@ -4,7 +4,7 @@ import asyncio
 import random
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from loguru import logger
 
 from ....domain.entities import Article, ArticleSource
+from ....domain.entities.source import WECHAT_PUBLISH_TIME_TIMEZONE, WECHAT_PUBLISH_TIME_TZ
 from ....domain.value_objects import ArticleContent, ArticleURL, ContentNote
 from ....shared.constants import USER_AGENTS, WECHAT_CONTENT_SELECTORS
 from ....shared.exceptions import (
@@ -52,6 +53,7 @@ _UNAVAILABLE_PAGE_MARKERS = (
     "该公众号已被封禁",
     "页面不存在",
 )
+_WECHAT_TIMEZONE = WECHAT_PUBLISH_TIME_TZ
 
 
 def _is_blocked_page(html: str) -> bool:
@@ -327,6 +329,9 @@ class WechatHttpxScraper(BaseScraper):
         source = ArticleSource.wechat(
             account_name=account_name or "未知",
             content_notes=capture_notes,
+            publish_time_timezone=(
+                WECHAT_PUBLISH_TIME_TIMEZONE if publish_time is not None else None
+            ),
         )
 
         return Article(
@@ -441,7 +446,9 @@ class WechatHttpxScraper(BaseScraper):
             match = re.search(pattern, html)
             if match:
                 try:
-                    return datetime.strptime(match.group(1), "%Y-%m-%d")
+                    return datetime.strptime(match.group(1), "%Y-%m-%d").replace(
+                        tzinfo=_WECHAT_TIMEZONE
+                    )
                 except ValueError:
                     pass
 
@@ -456,7 +463,9 @@ class WechatHttpxScraper(BaseScraper):
                 "%Y年%m月%d日",
             ):
                 try:
-                    return datetime.strptime(time_text, date_format)
+                    return datetime.strptime(time_text, date_format).replace(
+                        tzinfo=_WECHAT_TIMEZONE
+                    )
                 except ValueError:
                     continue
 
@@ -471,7 +480,7 @@ class WechatHttpxScraper(BaseScraper):
                 try:
                     ts = int(match.group(1))
                     if ts > 1000000000:  # 有效 Unix 时间戳范围
-                        return datetime.fromtimestamp(ts)
+                        return datetime.fromtimestamp(ts, tz=UTC).astimezone(_WECHAT_TIMEZONE)
                 except (ValueError, OSError):
                     pass
 
