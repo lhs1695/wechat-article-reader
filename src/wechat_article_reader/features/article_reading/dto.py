@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from ...domain.value_objects import ContentNote
+
 
 @dataclass(frozen=True)
 class ReadingLink:
@@ -61,7 +63,7 @@ class ArticleReadingProjection:
     content_hash: str
     blocks: tuple[ReadingBlock, ...]
     sections: tuple[ReadingSection, ...]
-    notes: tuple[str, ...] = ()
+    notes: tuple[ContentNote, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,7 @@ class IngestResult:
     sections: tuple[ReadingSection, ...] = ()
     block_count: int = 0
     revision: str = ""
-    content_notes: tuple[str, ...] = ()
+    content_notes: tuple[ContentNote, ...] = ()
     images: tuple[dict[str, object], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,7 +102,7 @@ class ArticleReadingMetadata:
     first_cached_at: str | None = None
     summary_generated_at: str | None = None
     summary_generation: dict[str, object] | None = None
-    content_notes: tuple[str, ...] = ()
+    content_notes: tuple[ContentNote, ...] = ()
     images: tuple[dict[str, object], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -126,7 +128,7 @@ class ArticleReadPage:
     image_count: int = 0
     omitted_images: int = 0
     image_content_read: bool = False
-    content_notes: tuple[str, ...] = ()
+    content_notes: tuple[ContentNote, ...] = ()
     next_read: dict[str, object] | None = None
     reading_scope: str = "article"
     end_of_article: bool = False
@@ -149,7 +151,7 @@ class ArticleReadPage:
             "image_count": self.image_count,
             "omitted_images": self.omitted_images,
             "image_content_read": self.image_content_read,
-            "content_notes": list(self.content_notes),
+            "content_notes": [note.to_dict() for note in self.content_notes],
             "next_read": self.next_read,
             "reading_scope": self.reading_scope,
             "end_of_article": self.end_of_article,
@@ -165,6 +167,7 @@ class ArticleExportResult:
     export_path: str
     revision: str = ""
     image_manifest_path: str | None = None
+    content_notes: tuple[ContentNote, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

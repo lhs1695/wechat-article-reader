@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from ...application.ports.outbound.image_asset_port import ImageAsset, ImageAssetPort
+from ...domain.value_objects import ContentNote
 from ...shared.exceptions import (
     ArticlePersistenceError,
     ArticleVersionChangedError,
@@ -73,7 +74,7 @@ class ArticleReadingService:
         self._projector = ArticleReadingProjector()
         self._renderer = MarkdownReadingRenderer()
         self._projection_cache: OrderedDict[
-            tuple[str, str, str, str], tuple[ArticleReadingProjection, int]
+            tuple[str, str, str, str, str], tuple[ArticleReadingProjection, int]
         ] = OrderedDict()
         self._projection_lock = RLock()
         self._projection_bytes = 0
@@ -81,11 +82,16 @@ class ArticleReadingService:
         self._projection_max_bytes = 8 * 1024 * 1024
 
     def _project(self, article: Article) -> ArticleReadingProjection:
+        source_notes = article.source.content_notes if article.source else ()
+        notes_digest = content_digest(
+            "\n".join(f"{note.code}:{note.scope}:{note.message}" for note in source_notes)
+        )
         key = (
             str(article.id),
             article.revision,
             content_digest(article.content_html, article.content_text),
             str(article.url),
+            notes_digest,
         )
         with self._projection_lock:
             if key in self._projection_cache:
@@ -157,6 +163,7 @@ class ArticleReadingService:
             image_manifest_path=str(Path(export_path).with_suffix(".assets") / "manifest.json")
             if download_images
             else None,
+            content_notes=self._project(article).notes,
         )
 
     def read_image(
@@ -383,7 +390,13 @@ class ArticleReadingService:
         notes = list(projection.notes)
         if page_images:
             notes.append(
-                f"本页含 {page_images} 张图片，{'仅返回链接和说明' if include_images else '图片已省略'}；未读取图片中的内容"
+                ContentNote(
+                    "images_not_read",
+                    f"本页含 {page_images} 张图片；"
+                    f"{'返回链接和说明' if include_images else '正文省略图片'}，"
+                    "图片内容未被读取或视觉分析",
+                    "page",
+                )
             )
         next_read: dict[str, object] | None = None
         if has_more:

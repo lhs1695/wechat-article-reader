@@ -55,6 +55,13 @@ def _summary_payload() -> ArticleSummaryPayload:
             account_name=None,
             publish_time="",
             word_count=12,
+            content_notes=(
+                {
+                    "code": "embedded_media_omitted",
+                    "message": "正文中的 SVG 或嵌入式媒体未纳入安全阅读内容",
+                    "scope": "article",
+                },
+            ),
         ),
         summary=SummaryPayload("概述", ("要点",), ("AI",), "一句话"),
     )
@@ -70,6 +77,12 @@ def test_summarize_article_uses_cached_id(monkeypatch) -> None:
     assert result["success"] is True
     assert result["source_trust"] == "untrusted_web_content"
     assert result["article_id"] == ARTICLE_ID
+    assert result["content_notes"][0]["code"] == "embedded_media_omitted"
+    assert result["content_notes"][-1] == {
+        "code": "summary_text_only",
+        "message": "摘要只覆盖可读取的正文文字和可用图注；不代表图片已被视觉分析",
+        "scope": "summary",
+    }
     service.summarize_cached.assert_called_once()
     service.summarize.assert_not_called()
 

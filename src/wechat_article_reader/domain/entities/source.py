@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from ..value_objects import ContentNote
+
 
 class SourceType(StrEnum):
     """来源类型"""
@@ -29,9 +31,15 @@ class ArticleSource:
     # 抓取信息
     scraped_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     scraper_name: str = "unknown"
+    content_notes: tuple[ContentNote, ...] = ()
 
     @classmethod
-    def wechat(cls, account_name: str, account_id: str | None = None) -> ArticleSource:
+    def wechat(
+        cls,
+        account_name: str,
+        account_id: str | None = None,
+        content_notes: tuple[ContentNote, ...] = (),
+    ) -> ArticleSource:
         """创建微信公众号来源"""
         return cls(
             type=SourceType.WECHAT,
@@ -39,4 +47,5 @@ class ArticleSource:
             account_id=account_id,
             account_name=account_name,
             scraper_name="wechat_scraper",
+            content_notes=content_notes,
         )

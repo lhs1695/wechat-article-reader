@@ -136,7 +136,7 @@ def test_image_metadata_and_inline_order_are_explicit():
     assert no_image.image_count == no_image.omitted_images == 1
     assert with_image.image_count == 1 and with_image.omitted_images == 0
     assert not no_image.image_content_read and not with_image.image_content_read
-    assert "未读取" in with_image.content_notes[-1]
+    assert "未被读取" in with_image.content_notes[-1].message
     body = with_image.content_markdown
     assert body.index("图片前") < body.index("![图解]") < body.index("图片后")
 

@@ -7,6 +7,7 @@ from threading import Event, Lock
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from ...domain.value_objects import ContentNote
 from ...shared.constants import DEFAULT_BATCH_SUMMARY_MAX_LENGTH, DEFAULT_SUMMARY_MAX_LENGTH
 from .dto import (
     ArticleExportPayload,
@@ -404,6 +405,15 @@ class ArticleWorkflowService:
 
     @staticmethod
     def _to_metadata(article: Article) -> ArticleMetadataPayload:
+        notes = list(article.source.content_notes if article.source else ())
+        if article.content is not None and article.content.images:
+            notes.append(
+                ContentNote(
+                    "images_not_read",
+                    "摘要仅可使用图片说明；图片内容未被读取或视觉分析",
+                    "image",
+                )
+            )
         return ArticleMetadataPayload(
             str(article.url),
             article.title,
@@ -412,6 +422,7 @@ class ArticleWorkflowService:
             article.publish_time_str,
             article.word_count,
             revision=article.revision,
+            content_notes=tuple(note.to_dict() for note in notes),
         )
 
     @staticmethod

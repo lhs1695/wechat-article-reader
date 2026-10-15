@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 from ...domain.entities import Article
+from ...domain.value_objects import ContentNote
 from ...shared.utils.article_identity import normalize_section_title
 from ...shared.utils.html_safety import preserve_style_semantics
 from .dto import ArticleReadingProjection, ReadingBlock, ReadingLink, ReadingSection
@@ -408,9 +409,31 @@ class ArticleReadingProjector:
             content_hash=digest,
             blocks=blocks,
             sections=self._sections(blocks),
-            notes=("文末可能包含推荐内容，已按原文保留",)
-            if any(block.text in _ACCOUNT_FOOTER_MARKERS for block in blocks)
-            else (),
+            notes=tuple(
+                [*(article.source.content_notes if article.source else ())]
+                + (
+                    [
+                        ContentNote(
+                            "recommendation_tail_retained",
+                            "正文含公众号关注或推荐尾部内容；阅读投影按原文保留",
+                            "article",
+                        )
+                    ]
+                    if any(block.text in _ACCOUNT_FOOTER_MARKERS for block in blocks)
+                    else []
+                )
+                + (
+                    [
+                        ContentNote(
+                            "images_not_read",
+                            "文章含图片；仅提供引用与可用图注，图片内容未被读取或视觉分析",
+                            "image",
+                        )
+                    ]
+                    if any(block.type == "image" for block in blocks)
+                    else []
+                )
+            ),
         )
 
     def _walk(self, node: Tag, drafts: list[dict[str, object]]) -> None:

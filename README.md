@@ -57,6 +57,8 @@
 | `read_article_image(article_id, image_id, expected_revision, download_image=false, send_to_model=false)` | 显式下载时联网/写图片缓存；显式提供时返回图像 | 默认仅元数据，图片编号来自阅读页/元数据；客户端需支持视觉 |
 | `summarize_article(article_id, max_length=1200)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
+阅读、缓存元数据与摘要响应中的 `content_notes` 以稳定的 `code`、`message`、`scope` 报告已观察到的抓取 / 阅读范围限制。它不会根据正文短就推断截断，也不代表文章已证明完整；摘要仅覆盖可读取的文字和可用图注。
+
 **明确不做**
 
 - 只接受 `mp.weixin.qq.com` 文章链接。

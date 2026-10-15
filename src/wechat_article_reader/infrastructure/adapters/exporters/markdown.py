@@ -13,6 +13,7 @@ from loguru import logger
 
 from ....application.ports.outbound.image_asset_port import ImageAssetPort
 from ....domain.entities import Article
+from ....domain.value_objects import ContentNote
 from ....features.article_reading import ArticleReadingProjector, MarkdownReadingRenderer
 from ....features.article_reading.dto import ArticleReadingProjection
 from ....features.article_reading.images import article_images, local_image_projection
@@ -184,6 +185,9 @@ class MarkdownExporter(BaseExporter):
                 assert manifest is not None
                 snapshot = _export_snapshot_metadata(snapshot_article, snapshot_options, md_content)
                 manifest["snapshot"] = snapshot
+                manifest["content_notes"] = [
+                    note.to_dict() for note in _content_notes(snapshot_article, projection)
+                ]
                 manifest_content = json.dumps(manifest, ensure_ascii=False, indent=2)
                 markdown_content = _with_snapshot_marker(md_content, snapshot)
                 self._publish_markdown_manifest(
@@ -381,6 +385,18 @@ class MarkdownExporter(BaseExporter):
 
         # 标题
         parts.append(f"# {escape_markdown_text(article.title)}\n")
+        content_notes = _content_notes(article, projection)
+        if content_notes:
+            parts.extend(
+                [
+                    "## 内容范围与限制",
+                    "",
+                    "以下是已观察到的采集或读取限制，不代表对全文完整性的判断：",
+                    "",
+                    *(f"- {note.message}" for note in content_notes),
+                    "",
+                ]
+            )
         if options.get("download_images"):
             parts.append(
                 "图片下载清单：本 Markdown 同名 `.assets/manifest.json`。下载不代表已理解图片；需要图文阅读时请逐张调用图片查看能力。\n"
@@ -420,3 +436,23 @@ class MarkdownExporter(BaseExporter):
         parts.append(f"[原文链接](<{markdown_destination(str(article.url))}>)")
 
         return "\n".join(parts)
+
+
+def _content_notes(
+    article: Article, projection: ArticleReadingProjection | None
+) -> tuple[ContentNote, ...]:
+    notes = list(projection.notes if projection is not None else ())
+    if projection is None and article.source is not None:
+        notes.extend(article.source.content_notes)
+    if article.content is not None and article.content.images:
+        notes.append(
+            ContentNote(
+                "images_not_read",
+                "导出只保留图片引用或说明；图片内容未被读取或视觉分析",
+                "image",
+            )
+        )
+    unique: dict[tuple[str, str], ContentNote] = {}
+    for note in notes:
+        unique.setdefault((note.code, note.scope), note)
+    return tuple(unique.values())

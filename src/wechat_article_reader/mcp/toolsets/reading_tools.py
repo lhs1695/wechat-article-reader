@@ -145,6 +145,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         章节和图片清单默认各返回 20 项，可用各自 next 参数从 get_cached_article 续取。
         更长的文章按 sections_page.items 中的标题或 start_cursor 跳读（父章节包含子章节）；
         节内仍超长时跟随 next_read。完整图文理解需另用 read_article_image 核对配图。
+        content_notes 以 code/message/scope 报告已观察到的限制，不代表正文完整度判断。
         只需文章概览时，可把返回的 article_id 交给 summarize_article 生成文字摘要；
         该工具不抓取文章，也不代替 read_article 的原文分页阅读。
         """
@@ -196,6 +197,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         toc_level 与 ingest_article 相同，默认 2。章节和图片清单分别默认每页 20 项，
         上限各 100 项；响应预算较紧时可能返回更少项目。原样调用对应 page.next。
         过长的标题、URL、alt 或 caption 会提供 UTF-8 安全预览并标记 truncated。
+        content_notes 只报告有证据的抓取范围限制，不推测文章是否完整。
         """
         try:
             toc_level = MCPInputValidator.validate_toc_level(toc_level)
@@ -254,6 +256,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         include_images=false（默认）排除图片语法、保留说明；图片数量与未读取状态会明确返回。
         为满足完整 MCP 响应的 128 KiB UTF-8 序列化预算，稠密元数据或中文正文可能自动缩短本页，
         以返回的 next_read 为准。章节 / 图片清单各自分页；本页未列出的图片可按 images.next 续取。
+        content_notes 报告抓取时观察到的限制，以及本页图片没有被读取的事实；不推断全文完整度。
         """
         try:
             cursor = MCPInputValidator.validate_int_range(
@@ -375,7 +378,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         path 必须是绝对 .md 文件路径或已存在目录。include_images 仅控制显示，
         download_images 独立控制下载和同名 .assets 图片清单；两个开关默认 false。
         下载失败在 Markdown 和清单中标记；下载不会把图片送入视觉模型。
-        成功返回 export_path 和可选 image_manifest_path，不回传正文。
+        成功返回 export_path、可选 image_manifest_path 与已知 content_notes，不回传正文。
         """
         try:
             if not isinstance(include_images, bool):

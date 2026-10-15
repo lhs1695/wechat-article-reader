@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from ...domain.entities import Article
 from ...domain.entities.source import ArticleSource, SourceType
 from ...domain.entities.summary import Summary
-from ...domain.value_objects import ArticleContent, ArticleURL
+from ...domain.value_objects import ArticleContent, ArticleURL, ContentNote
 from ...shared.exceptions import ArticleVersionChangedError
 from ...shared.utils.article_identity import article_digest, normalize_article_url
 from .models import ArticleModel, SummaryModel
@@ -200,4 +200,5 @@ class SqlAlchemyArticleRepository:
         data = json.loads(payload)
         data["type"] = SourceType(data["type"])
         data["scraped_at"] = datetime.fromisoformat(data["scraped_at"])
+        data["content_notes"] = tuple(ContentNote(**note) for note in data.get("content_notes", ()))
         return ArticleSource(**data)

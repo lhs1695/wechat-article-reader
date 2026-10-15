@@ -15,6 +15,7 @@ from ..shared.exceptions import (
     ArticleVersionChangedError,
     InvalidURLError,
     OperationCancelledError,
+    ScraperArticleUnavailableError,
     ScraperBlockedError,
     ScraperError,
     ScraperRateLimitedError,
@@ -57,6 +58,8 @@ def raise_mcp_error(
         raise MCPToolError("invalid_input", str(exc) or "输入参数无效") from exc
     if isinstance(exc, ScraperBlockedError):
         raise MCPToolError("scraper_blocked", "抓取被反爬限制") from exc
+    if isinstance(exc, ScraperArticleUnavailableError):
+        raise MCPToolError("article_unavailable", "来源页面明确提示文章已删除或不可访问") from exc
     if isinstance(exc, ScraperTimeoutError):
         raise MCPToolError("scraper_timeout", "抓取超时") from exc
     if isinstance(exc, ScraperRateLimitedError):

@@ -154,3 +154,4 @@ def test_account_footer_is_retained_with_content_note() -> None:
     assert "活动推销" in footer_markdown
     assert "今日好文推荐" in footer_page.content_markdown
     assert "这是正文结论，应当保留。" in footer_page.content_markdown
+    assert "recommendation_tail_retained" in {note.code for note in footer_page.content_notes}

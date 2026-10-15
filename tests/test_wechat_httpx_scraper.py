@@ -212,6 +212,56 @@ def test_maps_verify_page_to_blocked_without_logging_body(
     assert "kind=blocked" in joined
 
 
+def test_verification_page_with_article_container_is_rejected(scraper: WechatHttpxScraper) -> None:
+    html = (
+        '<html><div id="verify_bar">请输入验证码</div>'
+        '<div id="js_content"><p>页面伪装出的正文</p></div></html>'
+    )
+
+    with pytest.raises(ScraperBlockedError):
+        scraper._parse_html(html, ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"))
+
+
+def test_explicitly_deleted_article_page_fails(scraper: WechatHttpxScraper) -> None:
+    from wechat_article_reader.shared.exceptions import ScraperArticleUnavailableError
+
+    html = '<div class="weui-msg"><h2>该内容已被删除</h2></div>'
+
+    with pytest.raises(ScraperArticleUnavailableError, match="已删除"):
+        scraper._parse_html(html, ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"))
+
+
+def test_records_only_observed_capture_limitations(scraper: WechatHttpxScraper) -> None:
+    html = """<h1 class="rich_media_title">证据样本</h1>
+    <span class="rich_media_meta_text">作者甲</span><a id="js_name">公众号甲</a>
+    <em id="publish_time">2026-10-15</em>
+    <div id="js_content"><p>正文仍然完整可读。</p><svg><text>图形</text></svg>
+    <iframe src="https://example.com/embed"></iframe></div>"""
+
+    article = scraper._parse_html(html, ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"))
+
+    assert [note.code for note in article.source.content_notes] == ["embedded_media_omitted"]
+    assert "图形" not in article.content_html
+    assert "iframe" not in article.content_html
+
+
+def test_missing_source_metadata_is_reported_without_guessing(scraper: WechatHttpxScraper) -> None:
+    article = scraper._parse_html(
+        "<div id='js_content'><p>有正文，无来源资料。</p></div>",
+        ArticleURL.from_string("https://mp.weixin.qq.com/s/demo"),
+    )
+
+    codes = {note.code for note in article.source.content_notes}
+    assert codes == {
+        "title_missing",
+        "author_missing",
+        "account_name_missing",
+        "publish_time_missing",
+    }
+    assert article.account_name is None
+    assert article.author is None
+
+
 def test_parses_localized_publish_time(scraper: WechatHttpxScraper) -> None:
     response = MagicMock(spec=httpx.Response)
     response.status_code = 200

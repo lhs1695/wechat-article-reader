@@ -14,6 +14,7 @@ class ArticleMetadataPayload:
     publish_time: str
     word_count: int
     revision: str = field(default="", kw_only=True)
+    content_notes: tuple[dict[str, str], ...] = field(default=(), kw_only=True)
 
 
 @dataclass(frozen=True)

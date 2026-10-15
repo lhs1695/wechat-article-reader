@@ -230,6 +230,10 @@ class ScraperBlockedError(ScraperError):
     error_code = ErrorCode.SCRAPER_BLOCKED
 
 
+class ScraperArticleUnavailableError(ScraperError):
+    """The source page explicitly reports that the article is unavailable."""
+
+
 class ScraperRateLimitedError(ScraperError):
     """上游返回 429，调用方可在稍后重试。"""
 

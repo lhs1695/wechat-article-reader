@@ -14,10 +14,11 @@ from bs4 import BeautifulSoup
 from loguru import logger
 
 from ....domain.entities import Article, ArticleSource
-from ....domain.value_objects import ArticleContent, ArticleURL
+from ....domain.value_objects import ArticleContent, ArticleURL, ContentNote
 from ....shared.constants import USER_AGENTS, WECHAT_CONTENT_SELECTORS
 from ....shared.exceptions import (
     OperationCancelledError,
+    ScraperArticleUnavailableError,
     ScraperBlockedError,
     ScraperError,
     ScraperRateLimitedError,
@@ -45,11 +46,33 @@ _BLOCKED_PAGE_MARKERS = (
     "操作过于频繁",
     "访问过于频繁",
 )
+_UNAVAILABLE_PAGE_MARKERS = (
+    "该内容已被删除",
+    "此内容因违规无法查看",
+    "该公众号已被封禁",
+    "页面不存在",
+)
 
 
 def _is_blocked_page(html: str) -> bool:
     sample = html[:12_000]
     return any(marker in sample for marker in _BLOCKED_PAGE_MARKERS)
+
+
+def _has_verification_challenge(soup: BeautifulSoup) -> bool:
+    if soup.find(id=re.compile(r"verify|captcha|sec_tip", re.IGNORECASE)):
+        return True
+    if soup.find(class_=re.compile(r"verify|captcha", re.IGNORECASE)):
+        return True
+    return bool(soup.select_one('input[name*="verify"], input[name*="captcha"]'))
+
+
+def _is_unavailable_page(soup: BeautifulSoup) -> bool:
+    notice = soup.select_one(".weui-msg, .weui-msg__title, #js_article .weui-msg")
+    if notice is None:
+        return False
+    text = notice.get_text(" ", strip=True)
+    return any(marker in text for marker in _UNAVAILABLE_PAGE_MARKERS)
 
 
 class WechatHttpxScraper(BaseScraper):
@@ -248,6 +271,13 @@ class WechatHttpxScraper(BaseScraper):
         """解析HTML内容"""
         soup = BeautifulSoup(html, "html.parser")
 
+        if _is_unavailable_page(soup):
+            logger.warning("抓取失败 kind=article_unavailable")
+            raise ScraperArticleUnavailableError("文章页面已删除或不可访问")
+        if _has_verification_challenge(soup) and _is_blocked_page(html):
+            logger.warning("抓取失败 kind=blocked")
+            raise ScraperBlockedError("抓取被反爬限制")
+
         # 提取标题
         title = self._extract_title(soup)
 
@@ -259,6 +289,13 @@ class WechatHttpxScraper(BaseScraper):
 
         # 提取正文内容
         extracted_content = self._extract_content(soup)
+        capture_notes = self._capture_notes(
+            soup,
+            extracted_content,
+            author=author,
+            account_name=account_name,
+            publish_time=publish_time,
+        )
         content_html = sanitize_html(self._normalize_image_sources(extracted_content))
         if not content_html:
             if _is_blocked_page(html):
@@ -275,6 +312,7 @@ class WechatHttpxScraper(BaseScraper):
         # 创建来源
         source = ArticleSource.wechat(
             account_name=account_name or "未知",
+            content_notes=capture_notes,
         )
 
         return Article(
@@ -286,6 +324,47 @@ class WechatHttpxScraper(BaseScraper):
             content=content,
             source=source,
         )
+
+    @staticmethod
+    def _capture_notes(
+        soup: BeautifulSoup,
+        extracted_content: str,
+        *,
+        author: str | None,
+        account_name: str | None,
+        publish_time: datetime | None,
+    ) -> tuple[ContentNote, ...]:
+        notes: list[ContentNote] = []
+        title_selectors: list[tuple[str, dict[str, Any] | None]] = [
+            ("h1", {"class": "rich_media_title"}),
+            ("h1", {"id": "activity-name"}),
+            ("meta", {"property": "og:title"}),
+            ("title", None),
+        ]
+        if not any(
+            soup.find(tag, attrs=attrs) if attrs is not None else soup.find(tag)
+            for tag, attrs in title_selectors
+        ):
+            notes.append(ContentNote("title_missing", "抓取页面未提供可识别的文章标题", "article"))
+        if not author:
+            notes.append(ContentNote("author_missing", "抓取页面未提供作者信息", "article"))
+        if not account_name:
+            notes.append(ContentNote("account_name_missing", "抓取页面未提供公众号名称", "article"))
+        if publish_time is None:
+            notes.append(
+                ContentNote("publish_time_missing", "抓取页面未提供可识别的发布时间", "article")
+            )
+
+        media_soup = BeautifulSoup(extracted_content, "html.parser")
+        if media_soup.find(["svg", "iframe", "object", "embed"]):
+            notes.append(
+                ContentNote(
+                    "embedded_media_omitted",
+                    "正文中的 SVG 或嵌入式媒体未纳入安全阅读内容",
+                    "article",
+                )
+            )
+        return tuple(notes)
 
     def _extract_title(self, soup: BeautifulSoup) -> str:
         """提取标题"""
