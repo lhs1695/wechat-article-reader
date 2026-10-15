@@ -3,7 +3,15 @@ from __future__ import annotations
 from threading import Event
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+)
 
 from wechat_article_reader.application.use_cases.summarize_article import SummarizeArticleUseCase
 from wechat_article_reader.domain.value_objects import ArticleContent
@@ -18,6 +26,12 @@ from wechat_article_reader.shared.exceptions import (
 )
 
 
+def _status_error(error_type, status_code: int):
+    request = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+    response = httpx.Response(status_code, request=request)
+    return error_type("SDK error", response=response, body=None)
+
+
 def test_sdk_retry_is_disabled(monkeypatch):
     calls = []
     monkeypatch.setattr(
@@ -26,6 +40,23 @@ def test_sdk_retry_is_disabled(monkeypatch):
     )
     DeepSeekSummarizer("key")._get_client()
     assert calls[0]["max_retries"] == 0
+
+
+def test_real_openai_sdk_transient_and_permanent_errors_are_classified():
+    request = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+    transient_errors = (
+        APIConnectionError(request=request),
+        APITimeoutError(request=request),
+        _status_error(RateLimitError, 429),
+        _status_error(InternalServerError, 503),
+    )
+    permanent_errors = (
+        _status_error(BadRequestError, 400),
+        _status_error(BadRequestError, 401),
+    )
+
+    assert all(DeepSeekSummarizer._is_transient(error) for error in transient_errors)
+    assert not any(DeepSeekSummarizer._is_transient(error) for error in permanent_errors)
 
 
 @pytest.mark.parametrize("reason", ["length", "content_filter", None])
@@ -47,13 +78,10 @@ def test_missing_structured_fields_are_rejected():
 def test_cancelled_retry_does_not_call_model_again():
     signal, calls = Event(), []
 
-    class TransientError(Exception):
-        status_code = 429
-
     def create(**kwargs):
         calls.append(kwargs)
         signal.set()
-        raise TransientError()
+        raise _status_error(RateLimitError, 429)
 
     adapter = DeepSeekSummarizer("key")
     adapter._client = SimpleNamespace(
@@ -67,12 +95,9 @@ def test_cancelled_retry_does_not_call_model_again():
 def test_total_budget_caps_request_timeout_and_prevents_retry():
     calls = []
 
-    class TransientError(Exception):
-        status_code = 429
-
     def create(**kwargs):
         calls.append(kwargs)
-        raise TransientError()
+        raise _status_error(RateLimitError, 429)
 
     adapter = DeepSeekSummarizer("key", total_timeout=0.2)
     adapter._client = SimpleNamespace(
@@ -118,12 +143,20 @@ def test_deepseek_shortens_overview_at_sentence_boundary() -> None:
     assert summary.overview == "第一句完整。\n\n> 内容已按长度限制收缩。"
 
 
-def test_deepseek_retries_transient_error(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "error_factory",
+    [
+        lambda: APIConnectionError(
+            request=httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+        ),
+        lambda: _status_error(RateLimitError, 429),
+        lambda: _status_error(InternalServerError, 503),
+    ],
+)
+def test_deepseek_retries_transient_sdk_error(monkeypatch, error_factory) -> None:
     summarizer = DeepSeekSummarizer("key", max_retries=1)
     calls = 0
-
-    class TransientError(Exception):
-        status_code = 429
+    request_error = error_factory()
 
     response = SimpleNamespace(
         choices=[
@@ -137,7 +170,7 @@ def test_deepseek_retries_transient_error(monkeypatch) -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise TransientError()
+            raise request_error
         return response
 
     summarizer._client = SimpleNamespace(
@@ -149,6 +182,25 @@ def test_deepseek_retries_transient_error(monkeypatch) -> None:
     )
     assert summarizer._call_api("prompt")
     assert calls == 2
+
+
+def test_deepseek_does_not_retry_permanent_sdk_error() -> None:
+    summarizer = DeepSeekSummarizer("key", max_retries=3)
+    calls = 0
+    permanent_error = _status_error(BadRequestError, 400)
+
+    def create(**_):
+        nonlocal calls
+        calls += 1
+        raise permanent_error
+
+    summarizer._client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+
+    with pytest.raises(BadRequestError):
+        summarizer._call_api("prompt")
+    assert calls == 1
 
 
 def test_summary_rejects_unavailable_summarizer(sample_article) -> None:

@@ -22,8 +22,11 @@ from ....shared.prompts import STRUCTURED_SUMMARY_PROMPT_TEMPLATE
 from .base import BaseSummarizer
 
 _openai_available = True
+_TRANSIENT_SDK_ERRORS: tuple[type[Exception], ...] = ()
 try:
-    from openai import OpenAI
+    from openai import APIConnectionError, APITimeoutError, OpenAI
+
+    _TRANSIENT_SDK_ERRORS = (APIConnectionError, APITimeoutError)
 except ImportError:  # pragma: no cover
     _openai_available = False
 
@@ -163,7 +166,8 @@ class DeepSeekSummarizer(BaseSummarizer):
     def _is_transient(exc: Exception) -> bool:
         status = getattr(exc, "status_code", None)
         return (
-            status == 429
+            isinstance(exc, _TRANSIENT_SDK_ERRORS)
+            or status == 429
             or (isinstance(status, int) and status >= 500)
             or isinstance(exc, (TimeoutError, ConnectionError))
         )
