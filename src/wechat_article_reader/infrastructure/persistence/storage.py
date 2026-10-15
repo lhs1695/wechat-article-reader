@@ -11,7 +11,13 @@ from uuid import UUID
 from sqlalchemy import func, select
 
 from ...domain.entities import Article, Summary
-from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError, StorageError
+from ...shared.exceptions import (
+    ArticleVersionChangedError,
+    OperationCancelledError,
+    OperationDeadlineExceededError,
+    StorageError,
+)
+from ...shared.operation import check_operation_deadline
 from .database import Database
 from .models import ArticleModel, SummaryModel
 from .repository import normalize_article_url
@@ -44,11 +50,17 @@ class SqlAlchemyStorage:
                 with self._uow() as uow:
                     if cancel_event is not None and cancel_event.is_set():
                         raise OperationCancelledError()
+                    check_operation_deadline(cancel_event)
                     uow.articles.save(article)
                     if cancel_event is not None and cancel_event.is_set():
                         raise OperationCancelledError()
+                    check_operation_deadline(cancel_event)
                     uow.commit()
-            except (ArticleVersionChangedError, OperationCancelledError):
+            except (
+                ArticleVersionChangedError,
+                OperationCancelledError,
+                OperationDeadlineExceededError,
+            ):
                 self._restore_article(article, original_state)
                 raise
             except Exception as exc:
@@ -73,9 +85,11 @@ class SqlAlchemyStorage:
         with self._uow() as uow:
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
+            check_operation_deadline(cancel_event)
             saved = uow.articles.save_summary(article_id, expected_revision, summary)
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
+            check_operation_deadline(cancel_event)
             uow.commit()
             return saved
 

@@ -17,6 +17,7 @@ from ..shared.exceptions import (
     ArticleVersionChangedError,
     InvalidURLError,
     OperationCancelledError,
+    OperationDeadlineExceededError,
     ScraperArticleUnavailableError,
     ScraperBlockedError,
     ScraperError,
@@ -42,6 +43,8 @@ def raise_mcp_error(
         raise exc
     if isinstance(exc, OperationCancelledError):
         raise MCPToolError("operation_cancelled", "操作已取消，未提交后续写入") from exc
+    if isinstance(exc, OperationDeadlineExceededError):
+        raise MCPToolError("operation_timeout", "操作超过总耗时预算；后续请求与写入已取消") from exc
     if isinstance(exc, ReadingRevisionChangedError):
         recovery: dict[str, object] = {"tool": "get_cached_article", "arguments": {}}
         if article_id is not None:

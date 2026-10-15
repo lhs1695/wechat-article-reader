@@ -317,11 +317,19 @@ def _read_sync_response(
         for chunk in response.iter_bytes():
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
+            remaining = getattr(cancel_event, "remaining", None)
+            if callable(remaining):
+                remaining()
             size += len(chunk)
             if max_response_bytes is not None and size > max_response_bytes:
                 raise ResponseTooLargeError("Remote response exceeds the configured limit")
             chunks.append(chunk)
         return _buffered_response(response, b"".join(chunks))
+    except Exception:
+        remaining = getattr(cancel_event, "remaining", None)
+        if callable(remaining):
+            remaining()
+        raise
     finally:
         response.close()
 
@@ -403,8 +411,26 @@ def safe_fetch_sync(
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
             SSRFSafeSyncTransport.validate_url(current_url)
-            request = client.build_request(current_method, current_url, **request_kwargs)
-            response = client.send(request, stream=True)
+            per_request_kwargs = dict(request_kwargs)
+            remaining = getattr(cancel_event, "remaining", None)
+            if callable(remaining):
+                budget = remaining()
+                configured_timeout = per_request_kwargs.get("timeout", 30.0)
+                timeout = httpx.Timeout(configured_timeout)
+                per_request_kwargs["timeout"] = httpx.Timeout(
+                    connect=min(timeout.connect or budget, budget),
+                    read=min(timeout.read or budget, budget),
+                    write=min(timeout.write or budget, budget),
+                    pool=min(timeout.pool or budget, budget),
+                )
+            request = client.build_request(current_method, current_url, **per_request_kwargs)
+            try:
+                response = client.send(request, stream=True)
+            except Exception:
+                remaining = getattr(cancel_event, "remaining", None)
+                if callable(remaining):
+                    remaining()
+                raise
 
             if response.status_code not in (301, 302, 303, 307, 308):
                 return _read_sync_response(

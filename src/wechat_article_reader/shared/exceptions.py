@@ -35,6 +35,7 @@ class ErrorCode(Enum):
     INVALID_URL = (1002, "无效的URL")
     INVALID_CONTENT = (1003, "无效的内容")
     OPERATION_CANCELLED = (1004, "操作已取消")
+    OPERATION_TIMEOUT = (1005, "操作超过总耗时预算")
 
     # 网络/抓取错误 2xxx
     NETWORK_ERROR = (2000, "网络连接失败")
@@ -203,6 +204,12 @@ class OperationCancelledError(ApplicationError):
     """操作取消异常"""
 
     error_code = ErrorCode.OPERATION_CANCELLED
+
+
+class OperationDeadlineExceededError(ApplicationError):
+    """A cooperative operation exceeded its wall-clock budget."""
+
+    error_code = ErrorCode.OPERATION_TIMEOUT
 
 
 # ============ 基础设施层异常 ============

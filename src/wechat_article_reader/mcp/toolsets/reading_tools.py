@@ -6,9 +6,11 @@ import asyncio
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from mcp.server.fastmcp import Context
+
 from ...features.article_reading.revision import reading_revision as make_reading_revision
 from ..error_mapping import raise_mcp_error
-from ..execution import run_cancellable
+from ..execution import make_progress_callback, report_operation_phase, run_cancellable
 from ..input_validator import MCPInputValidator, MCPValidationError
 from ..response_budget import (
     DEFAULT_METADATA_PAGE_SIZE,
@@ -152,10 +154,12 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         toc_level: int = 2,
         sections_limit: int = DEFAULT_METADATA_PAGE_SIZE,
         images_limit: int = DEFAULT_METADATA_PAGE_SIZE,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """抓取或命中缓存，返回文章元数据及有界的章节、图片清单首屏。
 
         这是唯一会抓取微信公众号并写 SQLite 的工具。refresh=true 时强制重新抓取。
+        单次调用共享 180 秒总预算，宿主提供 progress token 时报告当前阶段；未知耗时不换算成百分比。
         要整篇 Markdown 文件时，随后调用 export_article 写盘；不要拼接 read_article 分页。
         默认 toc_level=2（H2）。若文章没有这么浅的标题（例如正文全是 H3），目录自动对齐到最浅一层。
         需要更细的纲时再提高 toc_level。篇幅不超过 read_article 的 max_chars 时一次读完。
@@ -184,12 +188,14 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 upper=MAX_METADATA_PAGE_SIZE,
             )
             toc_level = MCPInputValidator.validate_toc_level(toc_level)
+            await report_operation_phase(ctx, 1, "抓取或读取缓存文章")
             result = await run_cancellable(
                 service().ingest,
                 MCPInputValidator.validate_url(url),
                 refresh=refresh,
                 toc_level=MCPInputValidator.validate_toc_level(toc_level),
             )
+            await report_operation_phase(ctx, 2, "文章已缓存，正在生成目录与图片清单")
             return metadata_result(
                 {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()},
                 sections_cursor=None,
@@ -411,11 +417,14 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         include_images: bool = False,
         expected_revision: str | None = None,
         download_images: bool = False,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """将缓存文章导出 Markdown。默认不联网；download_images=true 时下载微信 CDN 图片。
 
         path 必须是绝对 .md 文件路径或已存在目录。include_images 仅控制显示，
         download_images 独立控制下载和同名 .assets 图片清单；两个开关默认 false。
+        整次调用共享 180 秒预算；下载时按已处理图片数 / 图片总数报告进度。取消或超时后，已完成的图片缓存保留，
+        但 Markdown 与清单只在导出提交边界发布。
         下载失败在 Markdown 和清单中标记；下载不会把图片送入视觉模型。
         成功返回 export_path、可选 image_manifest_path 与已知 content_notes，不回传正文。
         """
@@ -424,18 +433,25 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 raise MCPValidationError("include_images must be a boolean")
             if type(download_images) is not bool:
                 raise MCPValidationError("download_images must be a boolean")
+            await report_operation_phase(ctx, 1, "准备导出缓存文章")
+            export_options: dict[str, Any] = {}
+            if download_images:
+                export_options["progress_callback"] = make_progress_callback(
+                    ctx, asyncio.get_running_loop()
+                )
+            if expected_revision is not None:
+                export_options["expected_revision"] = MCPInputValidator.validate_revision(
+                    expected_revision
+                )
             result = await run_cancellable(
                 service().export_markdown,
                 MCPInputValidator.validate_article_id(article_id),
                 path=MCPInputValidator.validate_export_path(path),
                 include_images=include_images,
                 **({"download_images": True} if download_images else {}),
-                **(
-                    {"expected_revision": MCPInputValidator.validate_revision(expected_revision)}
-                    if expected_revision is not None
-                    else {}
-                ),
+                **export_options,
             )
+            await report_operation_phase(ctx, 2, "文章导出完成")
             return {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()}
         except Exception as exc:
             raise_mcp_error(
@@ -450,10 +466,12 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         expected_reading_revision: str,
         download_image: bool = False,
         send_to_model: bool = False,
+        ctx: Context | None = None,
     ) -> list[Any]:
         """按阅读页 images 编号读取文章图片，不接受任意 URL。
 
         默认仅返回元数据。download_image=true 允许下载到本地缓存；
+        单次调用共享 180 秒总预算，宿主提供 progress token 时报告读取阶段。
         必须传 metadata 或阅读页中的 `reading_revision` 作为 `expected_reading_revision`。
         send_to_model=true 才返回 MCP 图像内容，需客户端及模型支持视觉。
         两个开关独立：缓存图片可不联网直接提供；未缓存时须显式允许下载。
@@ -466,6 +484,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         from mcp.types import ImageContent, TextContent
 
         try:
+            await report_operation_phase(ctx, 1, "读取缓存图片元数据")
             metadata, asset = await run_cancellable(
                 service().read_image,
                 MCPInputValidator.validate_article_id(article_id),
@@ -476,6 +495,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 download_image=download_image,
                 send_to_model=send_to_model,
             )
+            await report_operation_phase(ctx, 2, "图片读取完成")
             content: list[Any] = [
                 TextContent(type="text", text=json.dumps(metadata, ensure_ascii=False))
             ]

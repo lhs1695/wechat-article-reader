@@ -9,6 +9,7 @@ from threading import Event
 
 from ....domain.entities import Article
 from ....shared.exceptions import OperationCancelledError
+from ....shared.operation import check_operation_deadline
 
 
 class BaseExporter(ABC):
@@ -41,6 +42,7 @@ class BaseExporter(ABC):
                 temporary.flush()
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
+            check_operation_deadline(cancel_event)
             temporary_path.replace(output_path)
         finally:
             if temporary_path is not None and temporary_path.exists():

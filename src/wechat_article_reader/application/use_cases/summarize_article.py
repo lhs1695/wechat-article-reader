@@ -14,6 +14,7 @@ from ...domain.value_objects import ArticleContent
 from ...shared.constants import DEFAULT_SUMMARY_MAX_LENGTH
 from ...shared.exceptions import (
     OperationCancelledError,
+    OperationDeadlineExceededError,
     SummarizerNotAvailableError,
     SummarizerTokenLimitError,
     UseCaseError,
@@ -104,6 +105,8 @@ class SummarizeArticleUseCase:
             )
 
         except OperationCancelledError:
+            raise
+        except OperationDeadlineExceededError:
             raise
         except (SummarizerNotAvailableError, SummarizerTokenLimitError):
             raise

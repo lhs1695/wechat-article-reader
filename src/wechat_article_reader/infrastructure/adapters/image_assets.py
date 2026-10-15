@@ -13,6 +13,7 @@ from PIL import Image, UnidentifiedImageError
 
 from ...application.ports.outbound.image_asset_port import ImageAsset
 from ...shared.exceptions import OperationCancelledError
+from ...shared.operation import check_operation_deadline
 from ...shared.utils.ssrf_protection import safe_fetch_sync
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -87,11 +88,13 @@ def atomic_write_bytes(path: Path, data: bytes, cancel_event: Event | None = Non
     try:
         if cancel_event is not None and cancel_event.is_set():
             raise OperationCancelledError()
+        check_operation_deadline(cancel_event)
         with NamedTemporaryFile(dir=path.parent, prefix=".image-", delete=False) as stream:
             temporary = Path(stream.name)
             stream.write(data)
         if cancel_event is not None and cancel_event.is_set():
             raise OperationCancelledError()
+        check_operation_deadline(cancel_event)
         os.replace(temporary, path)
     finally:
         if temporary is not None:
@@ -109,6 +112,7 @@ class CachedImageAssets:
             raise ValueError("图片 URL 不在支持的微信图片 CDN 范围")
         if cancel_event is not None and cancel_event.is_set():
             raise OperationCancelledError()
+        check_operation_deadline(cancel_event)
         target = self.cache_dir / (hashlib.sha256(url.encode()).hexdigest() + ".image")
         if target.is_file():
             if target.stat().st_size > MAX_IMAGE_BYTES:
@@ -128,7 +132,9 @@ class CachedImageAssets:
             cancel_event=cancel_event,
         )
         response.raise_for_status()
+        check_operation_deadline(cancel_event)
         asset = validate_image(response.content)
+        check_operation_deadline(cancel_event)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(target, asset.data, cancel_event)
         return asset

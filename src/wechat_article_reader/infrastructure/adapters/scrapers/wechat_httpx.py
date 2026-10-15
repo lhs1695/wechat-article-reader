@@ -208,6 +208,7 @@ class WechatHttpxScraper(BaseScraper):
         for attempt in range(1, max(1, self._max_retries) + 1):
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
+            self._check_deadline(cancel_event)
             self._wait_for_request_slot(cancel_event)
             try:
                 response = self._get(
@@ -215,6 +216,7 @@ class WechatHttpxScraper(BaseScraper):
                     headers,
                     **({"cancel_event": cancel_event} if cancel_event is not None else {}),
                 )
+                self._check_deadline(cancel_event)
             except (httpx.TimeoutException, httpx.TransportError):
                 if attempt == max(1, self._max_retries):
                     raise
@@ -263,9 +265,21 @@ class WechatHttpxScraper(BaseScraper):
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
             remaining = deadline - time.monotonic()
+            operation_remaining = WechatHttpxScraper._operation_remaining(cancel_event)
             if remaining <= 0:
                 return
-            time.sleep(min(remaining, 0.1))
+            time.sleep(min(remaining, operation_remaining, 0.1))
+
+    @staticmethod
+    def _operation_remaining(cancel_event: "CancellationSignal | None") -> float:
+        remaining = getattr(cancel_event, "remaining", None)
+        return remaining() if callable(remaining) else float("inf")
+
+    @staticmethod
+    def _check_deadline(cancel_event: "CancellationSignal | None") -> None:
+        remaining = getattr(cancel_event, "remaining", None)
+        if callable(remaining):
+            remaining()
 
     def _parse_html(self, html: str, url: ArticleURL) -> Article:
         """解析HTML内容"""

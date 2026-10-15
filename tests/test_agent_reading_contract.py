@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
@@ -340,6 +341,48 @@ def test_identical_summary_conditions_reuse_but_changed_length_regenerates(stora
     assert storage.get(item.id).summary.generation["projection_version"] == 2
 
 
+def test_summaries_coalesce_by_article_without_serializing_other_articles(storage):
+    from threading import Barrier, Lock
+
+    first = article("<p>第一篇正文</p>")
+    second = Article(
+        url=ArticleURL.from_string("https://mp.weixin.qq.com/s/another"),
+        title="第二篇",
+        content=ArticleContent.from_html("<p>第二篇正文</p>"),
+    )
+    storage.save(first)
+    storage.save(second)
+    barrier = Barrier(2)
+    calls: list[str] = []
+    calls_lock = Lock()
+
+    def summarize(*, content, **kwargs):
+        with calls_lock:
+            calls.append(content.text)
+        barrier.wait(timeout=2)
+        return Summary("并发摘要")
+
+    adapter = SimpleNamespace(
+        is_available=lambda: True, summarize=summarize, generation_profile={"model": "test"}
+    )
+    workflow = ArticleWorkflowService(
+        SimpleNamespace(execute=lambda _url: first),
+        SummarizeArticleUseCase(adapter, SummarySourceRenderer()),
+        storage=storage,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(workflow.summarize_existing, item) for item in (first, second)]
+        results = [future.result(timeout=3) for future in futures]
+
+    assert len(calls) == 2
+    assert {result.article.article_id for result in results} == {str(first.id), str(second.id)}
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        repeated = list(executor.map(lambda _: workflow.summarize_existing(first), range(2)))
+    assert len(calls) == 2
+    assert repeated[0].summary.generated_at == repeated[1].summary.generated_at
+
+
 def test_cancel_after_flush_rolls_back(storage):
     signal = Event()
 
@@ -419,27 +462,32 @@ def test_failed_article_save_restores_entity_and_keeps_old_cache(
 
 
 def test_concurrent_cold_fetches_share_one_cached_identity(storage):
-    from threading import Barrier
+    from threading import Lock
 
     class ConcurrentScraper:
         name = "concurrent"
-        barrier = Barrier(2)
+        calls = 0
+        lock = Lock()
 
         def can_handle(self, url: ArticleURL) -> bool:
             return url.is_wechat
 
         def scrape(self, url: ArticleURL, *, cancel_event=None) -> Article:
-            self.barrier.wait(timeout=5)
+            with self.lock:
+                self.calls += 1
+            time.sleep(0.05)
             return Article(
                 url=url, title="并发抓取", content=ArticleContent.from_html("<p>正文</p>")
             )
 
-    use_case = FetchArticleUseCase(scrapers=[ConcurrentScraper()], storage=storage)
+    scraper = ConcurrentScraper()
+    use_case = FetchArticleUseCase(scrapers=[scraper], storage=storage)
     url = "https://mp.weixin.qq.com/s/contract"
     with ThreadPoolExecutor(max_workers=2) as executor:
         articles = list(executor.map(lambda _: use_case.execute(url), range(2)))
 
     assert articles[0].id == articles[1].id
+    assert scraper.calls == 1
     assert storage.get_by_url(url).id == articles[0].id
     assert storage.get_stats().total_entries == 1
 

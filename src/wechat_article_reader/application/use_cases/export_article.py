@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ...domain.entities import Article
-from ...shared.exceptions import OperationCancelledError, UseCaseError
+from ...shared.exceptions import (
+    OperationCancelledError,
+    OperationDeadlineExceededError,
+    UseCaseError,
+)
 
 if TYPE_CHECKING:
     from ..ports.outbound import ExporterPort
@@ -65,7 +69,7 @@ class ExportArticleUseCase:
             logger.info(f"导出成功: {result}")
             return result
 
-        except OperationCancelledError:
+        except (OperationCancelledError, OperationDeadlineExceededError):
             raise
         except Exception as e:
             logger.error(f"导出失败: {e}")

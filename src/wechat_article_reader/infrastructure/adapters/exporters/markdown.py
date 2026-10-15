@@ -3,11 +3,13 @@
 import json
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from threading import Event
+from typing import cast
 
 from loguru import logger
 
@@ -22,7 +24,12 @@ from ....features.article_reading.projection import (
     escape_markdown_text,
     markdown_destination,
 )
-from ....shared.exceptions import ExporterError, OperationCancelledError
+from ....shared.exceptions import (
+    ExporterError,
+    OperationCancelledError,
+    OperationDeadlineExceededError,
+)
+from ....shared.operation import check_operation_deadline
 from ..image_assets import atomic_write_bytes
 from .base import BaseExporter
 from .path_lock import export_path_lock
@@ -152,9 +159,17 @@ class MarkdownExporter(BaseExporter):
                 raise ValueError(f"{key} must be a boolean")
         include_summary = options.get("include_summary", True)
         include_frontmatter = options.get("include_frontmatter", True)
-        cancel_event = options.get("cancel_event")
-        if cancel_event is not None and not isinstance(cancel_event, Event):
+        cancel_event_value = options.get("cancel_event")
+        cancel_event = cast(Event | None, cancel_event_value)
+        if cancel_event_value is not None and not callable(
+            getattr(cancel_event_value, "is_set", None)
+        ):
             raise ValueError("cancel_event must be a threading.Event")
+        progress_callback = cast(
+            Callable[[str, int, int], None] | None, options.get("progress_callback")
+        )
+        if progress_callback is not None and not callable(progress_callback):
+            raise ValueError("progress_callback must be callable")
 
         snapshot_options = {
             "include_body": include_body,
@@ -169,7 +184,7 @@ class MarkdownExporter(BaseExporter):
         if download_images:
             assert projection is not None
             projection, manifest, failures = self._download_images(
-                snapshot_article, projection, output_path, cancel_event
+                snapshot_article, projection, output_path, cancel_event, progress_callback
             )
         md_options = dict(options)
         md_options.update(
@@ -179,6 +194,7 @@ class MarkdownExporter(BaseExporter):
             image_failures=failures,
         )
         md_content = self._generate_markdown(snapshot_article, **md_options)
+        check_operation_deadline(cancel_event)
 
         try:
             if download_images:
@@ -206,6 +222,8 @@ class MarkdownExporter(BaseExporter):
             logger.info(f"Markdown导出成功: {output_path}")
             return str(output_path)
         except OperationCancelledError:
+            raise
+        except OperationDeadlineExceededError:
             raise
         except Exception as e:
             raise ExporterError(f"Markdown导出失败: {e}") from e
@@ -239,8 +257,10 @@ class MarkdownExporter(BaseExporter):
                 shutil.copy2(manifest_path, manifest_backup)
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
+            check_operation_deadline(cancel_event)
             os.replace(manifest_stage, manifest_path)
             manifest_published = True
+            check_operation_deadline(cancel_event)
             os.replace(markdown_stage, markdown_path)
         except Exception as exc:
             if manifest_published:
@@ -273,6 +293,7 @@ class MarkdownExporter(BaseExporter):
         projection: ArticleReadingProjection,
         output_path: Path,
         cancel_event: Event | None,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> tuple[ArticleReadingProjection, dict[str, object], list[str]]:
         from dataclasses import asdict
         from urllib.parse import quote
@@ -288,9 +309,13 @@ class MarkdownExporter(BaseExporter):
         total_bytes = 0
         downloaded: dict[str, tuple[str, str, int]] = {}
         failed_urls: dict[str, str] = {}
-        for image in article_images(projection):
+        images = article_images(projection)
+        if progress_callback is not None:
+            self._report_progress(progress_callback, "下载图片", 0, len(images))
+        for processed, image in enumerate(images, start=1):
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
+            check_operation_deadline(cancel_event)
             entry = asdict(image)
             try:
                 if self._image_assets is None:
@@ -321,6 +346,8 @@ class MarkdownExporter(BaseExporter):
                 )
             except OperationCancelledError:
                 raise
+            except OperationDeadlineExceededError:
+                raise
             except Exception as exc:
                 failures.append(image.image_id)
                 failed_urls[image.url] = (
@@ -331,6 +358,8 @@ class MarkdownExporter(BaseExporter):
                     error=failed_urls[image.url],
                 )
             entries.append(entry)
+            if progress_callback is not None:
+                self._report_progress(progress_callback, "下载图片", processed, len(images))
         manifest: dict[str, object] = {
             "article_id": str(article.id),
             "revision": article.revision,
@@ -339,6 +368,15 @@ class MarkdownExporter(BaseExporter):
             "image_content_read": False,
         }
         return local_image_projection(projection, paths), manifest, failures
+
+    @staticmethod
+    def _report_progress(
+        callback: Callable[[str, int, int], None], phase: str, completed: int, total: int
+    ) -> None:
+        try:
+            callback(phase, completed, total)
+        except Exception as exc:
+            logger.debug("进度回调失败 type={}", type(exc).__name__)
 
     def _generate_markdown(self, article: Article, **options) -> str:
         """生成Markdown内容"""

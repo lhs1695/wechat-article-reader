@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from threading import Event, RLock
@@ -16,6 +17,7 @@ from ...shared.exceptions import (
     ArticleVersionChangedError,
     OperationCancelledError,
 )
+from ...shared.operation import check_operation_deadline
 from ...shared.utils.article_identity import normalize_section_title
 from .dto import (
     ArticleExportResult,
@@ -141,6 +143,7 @@ class ArticleReadingService:
         download_images: bool = False,
         expected_revision: str | None = None,
         cancel_event: Event | None = None,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> ArticleExportResult:
         if not isinstance(include_images, bool):
             raise ValueError("include_images must be a boolean")
@@ -153,6 +156,8 @@ class ArticleReadingService:
         export_options: dict[str, Any] = (
             {"cancel_event": cancel_event} if cancel_event is not None else {}
         )
+        if progress_callback is not None:
+            export_options["progress_callback"] = progress_callback
         if download_images:
             export_options["download_images"] = True
         export_path = self._workflow.export_existing(
@@ -679,6 +684,7 @@ def _section_error(message: str, sections: tuple[ReadingSection, ...]) -> Sectio
 def _check_cancelled(event: Event | None) -> None:
     if event is not None and event.is_set():
         raise OperationCancelledError()
+    check_operation_deadline(event)
 
 
 def _drop_trailing_heading(

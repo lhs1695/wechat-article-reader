@@ -17,7 +17,12 @@ from ....shared.constants import (
     DEFAULT_DEEPSEEK_MODEL,
     DEFAULT_SUMMARY_MAX_LENGTH,
 )
-from ....shared.exceptions import OperationCancelledError, SummarizerAPIError, SummarizerError
+from ....shared.exceptions import (
+    OperationCancelledError,
+    OperationDeadlineExceededError,
+    SummarizerAPIError,
+    SummarizerError,
+)
 from ....shared.prompts import STRUCTURED_SUMMARY_PROMPT_TEMPLATE
 from .base import BaseSummarizer
 
@@ -100,6 +105,8 @@ class DeepSeekSummarizer(BaseSummarizer):
             )
         except OperationCancelledError:
             raise
+        except OperationDeadlineExceededError:
+            raise
         except SummarizerError:
             raise
         except Exception as exc:
@@ -115,6 +122,9 @@ class DeepSeekSummarizer(BaseSummarizer):
     def _call_api(self, prompt: str, *, cancel_event: Event | None = None) -> str:
         client = self._get_client()
         deadline = time.monotonic() + self._total_timeout
+        operation_deadline = getattr(cancel_event, "deadline", None)
+        if isinstance(operation_deadline, (int, float)):
+            deadline = min(deadline, operation_deadline)
         for attempt in range(self._max_retries + 1):
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
@@ -136,6 +146,8 @@ class DeepSeekSummarizer(BaseSummarizer):
                     max_tokens=self._max_output_tokens + self._reasoning_token_budget,
                     timeout=min(self._timeout, remaining),
                 )
+                if time.monotonic() >= deadline:
+                    raise OperationDeadlineExceededError()
                 if cancel_event is not None and cancel_event.is_set():
                     raise OperationCancelledError()
                 if time.monotonic() > deadline:
@@ -148,7 +160,11 @@ class DeepSeekSummarizer(BaseSummarizer):
                 return content
             except SummarizerError:
                 raise
+            except OperationDeadlineExceededError:
+                raise
             except Exception as exc:
+                if time.monotonic() >= deadline:
+                    raise OperationDeadlineExceededError() from exc
                 if attempt >= self._max_retries or not self._is_transient(exc):
                     raise
                 delay = 0.5 * (2**attempt)
@@ -156,8 +172,10 @@ class DeepSeekSummarizer(BaseSummarizer):
                     raise SummarizerError("DeepSeek 总耗时超过限制") from exc
                 logger.warning("DeepSeek transient failure; retrying in {}s", delay)
                 if cancel_event is not None:
-                    if cancel_event.wait(delay):
+                    if cancel_event.wait(min(delay, max(0.0, deadline - time.monotonic()))):
                         raise OperationCancelledError() from exc
+                    if time.monotonic() >= deadline:
+                        raise OperationDeadlineExceededError() from exc
                 else:
                     time.sleep(delay)
         raise SummarizerError("DeepSeek 调用失败")  # pragma: no cover

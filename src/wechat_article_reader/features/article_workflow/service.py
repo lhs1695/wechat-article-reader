@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from ...domain.value_objects import ContentNote
 from ...shared.constants import DEFAULT_BATCH_SUMMARY_MAX_LENGTH, DEFAULT_SUMMARY_MAX_LENGTH
+from ...shared.operation import BoundedKeyedLockPool, check_operation_deadline
 from .dto import (
     ArticleExportPayload,
     ArticleFetchPayload,
@@ -43,7 +44,7 @@ class ArticleWorkflowService:
     ) -> None:
         self._fetch_use_case, self._summarize_use_case = fetch_use_case, summarize_use_case
         self._export_use_case, self._storage = export_use_case, storage
-        self._summary_lock = Lock()
+        self._summary_locks = BoundedKeyedLockPool(max_keys=256)
 
     def fetch(self, url: str, content_limit: int | None = 10_000) -> ArticleFetchPayload:
         article = self.fetch_article(url)
@@ -89,7 +90,7 @@ class ArticleWorkflowService:
         continue_on_summary_error: bool = False,
         download_images: bool = False,
     ) -> ArticleProcessPayload:
-        from ...shared.exceptions import OperationCancelledError
+        from ...shared.exceptions import OperationCancelledError, OperationDeadlineExceededError
 
         if target is not None and self._export_use_case is None:
             raise RuntimeError("导出工作流不可用")
@@ -104,6 +105,8 @@ class ArticleWorkflowService:
                     article, max_length=max_length, cancel_event=cancel_event
                 )
             except OperationCancelledError:
+                raise
+            except OperationDeadlineExceededError:
                 raise
             except Exception as exc:
                 if not continue_on_summary_error:
@@ -168,10 +171,8 @@ class ArticleWorkflowService:
         """Reuse or persist a summary for this exact article revision and profile."""
         from ...shared.exceptions import ArticleVersionChangedError, OperationCancelledError
 
-        while not self._summary_lock.acquire(timeout=0.1):
-            if cancel_event is not None and cancel_event.is_set():
-                raise OperationCancelledError()
-        try:
+        with self._summary_locks.acquire((str(article.id), article.revision), cancel_event):
+            check_operation_deadline(cancel_event)
             if cancel_event is not None and cancel_event.is_set():
                 raise OperationCancelledError()
             if self._storage is not None:
@@ -193,6 +194,7 @@ class ArticleWorkflowService:
                 )
                 if cancel_event is not None and cancel_event.is_set():
                     raise OperationCancelledError()
+                check_operation_deadline(cancel_event)
                 if self._storage is not None and not self._storage.save_summary(
                     article.id,
                     article.revision,
@@ -203,8 +205,6 @@ class ArticleWorkflowService:
                     raise ArticleVersionChangedError(current.revision if current else None)
                 article.attach_summary(summary)
             return article, summary
-        finally:
-            self._summary_lock.release()
 
     def summarize_cached(
         self,
