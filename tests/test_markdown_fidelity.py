@@ -8,7 +8,8 @@ import pytest
 from bs4 import BeautifulSoup
 from markdown_it import MarkdownIt
 
-from wechat_article_reader.domain.entities import Article
+from wechat_article_reader.domain.entities import Article, Summary, SummaryEvidence
+from wechat_article_reader.domain.entities.source import ArticleSource
 from wechat_article_reader.domain.value_objects import ArticleContent, ArticleURL
 from wechat_article_reader.features.article_reading import (
     ArticleReadingProjector,
@@ -154,6 +155,66 @@ def test_export_deduplicates_title_and_serializes_url():
     assert md.count("# same title") == 1
     url_line = next(line for line in md.splitlines() if line.startswith("url: "))
     assert json.loads(url_line.removeprefix("url: ")) == str(article.url)
+
+
+def test_export_frontmatter_tracks_article_identity_revision_and_scrape_time():
+    article = _article("<p>body</p>")
+    object.__setattr__(article, "source", ArticleSource.wechat("账号"))
+    md = MarkdownExporter()._generate_markdown(article)
+    assert f'article_id: "{article.id}"' in md
+    assert f'article_revision: "{article.revision}"' in md
+    assert f'scraped_at: "{article.source.scraped_at.isoformat()}"' in md
+
+
+def test_export_frontmatter_escapes_revision_as_yaml_scalar():
+    article = _article("<p>body</p>")
+    object.__setattr__(article, "revision", 'rev"\n: injected')
+    md = MarkdownExporter()._generate_markdown(article)
+    revision_line = next(line for line in md.splitlines() if line.startswith("article_revision: "))
+    assert json.loads(revision_line.removeprefix("article_revision: ")) == 'rev"\n: injected'
+
+
+def test_export_frontmatter_traces_summary_input_and_generation(sample_article, sample_summary):
+    summary = Summary(
+        overview=sample_summary.overview,
+        key_points=sample_summary.key_points,
+        tags=sample_summary.tags,
+        input_hash="f" * 64,
+        generation={
+            "input_char_count": 4321,
+            "max_length": 1200,
+            "prompt_version": 'structured-"v2',
+            "projection_version": 3,
+            "api_key": "must-not-be-exported",
+        },
+    )
+    sample_article.attach_summary(summary)
+    md = MarkdownExporter()._generate_markdown(sample_article)
+    assert 'summary_input_sha256: "' + "f" * 64 + '"' in md
+    assert "summary_input_char_count: 4321" in md
+    assert "summary_max_length: 1200" in md
+    prompt_line = next(
+        line for line in md.splitlines() if line.startswith("summary_prompt_version: ")
+    )
+    assert json.loads(prompt_line.removeprefix("summary_prompt_version: ")) == 'structured-"v2'
+    assert "summary_projection_version: 3" in md
+    assert "api_key" not in md
+
+
+def test_export_prints_verified_summary_evidence(sample_article):
+    quote = "原文逐字摘录。"
+    sample_article.attach_summary(
+        Summary(
+            overview="摘要",
+            key_points=("关键结论",),
+            input_hash="b" * 64,
+            evidence=(SummaryEvidence(0, quote, 20, 27),),
+        )
+    )
+    md = MarkdownExporter()._generate_markdown(sample_article)
+    assert "### 可核验出处" in md
+    assert "要点 1" in md and "[20, 27)" in md
+    assert quote in md and "b" * 64 in md
 
 
 def test_entity_at_chunk_boundary_is_not_reinterpreted():

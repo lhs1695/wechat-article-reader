@@ -10,7 +10,11 @@ from threading import Event, RLock
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from ...application.ports.outbound.image_asset_port import ImageAsset, ImageAssetPort
+from ...application.ports.outbound.image_asset_port import (
+    ImageAsset,
+    ImageAssetPort,
+    ImageCropRegion,
+)
 from ...domain.value_objects import ContentNote
 from ...shared.exceptions import (
     ArticlePersistenceError,
@@ -187,11 +191,28 @@ class ArticleReadingService:
         *,
         download_image: bool = False,
         send_to_model: bool = False,
+        crop_region: ImageCropRegion | None = None,
         expected_reading_revision: str,
         cancel_event: Event | None = None,
     ) -> tuple[dict[str, object], ImageAsset | None]:
         if type(download_image) is not bool or type(send_to_model) is not bool:
             raise ValueError("download_image and send_to_model must be booleans")
+        if crop_region is not None:
+            if (
+                not isinstance(crop_region, tuple)
+                or len(crop_region) != 4
+                or any(type(value) is not int for value in crop_region)
+            ):
+                raise ValueError("crop_region must be (x, y, width, height) integer percentages")
+            x, y, width, height = crop_region
+            if (
+                not (0 <= x < 100 and 0 <= y < 100 and 1 <= width <= 100 and 1 <= height <= 100)
+                or x + width > 100
+                or y + height > 100
+            ):
+                raise ValueError("crop_region 百分比范围无效或超出图片边界")
+            if not send_to_model:
+                raise ValueError("局部图片读取需要显式设置 send_to_model=true")
         article = self._get_article(article_id)
         _check_cancelled(cancel_event)
         current_reading_revision = article_reading_revision(article)
@@ -212,7 +233,10 @@ class ArticleReadingService:
             if self._image_assets is None:
                 raise ValueError("图片服务不可用")
             asset = self._image_assets.load(
-                image.url, download=download_image, cancel_event=cancel_event
+                image.url,
+                download=download_image,
+                cancel_event=cancel_event,
+                **({"crop_region": crop_region} if crop_region is not None else {}),
             )
         _check_cancelled(cancel_event)
         result: dict[str, object] = {
@@ -229,6 +253,17 @@ class ArticleReadingService:
             if send_to_model
             else "只返回图片元数据，未向视觉模型提供图像。",
         }
+        if crop_region is not None:
+            result["crop_region_percent"] = {
+                "x": crop_region[0],
+                "y": crop_region[1],
+                "width": crop_region[2],
+                "height": crop_region[3],
+            }
+            result["visual_scope"] = "cropped_region"
+            result["note"] = (
+                "已提供按百分比裁剪的局部图片；只覆盖所选静态图片区域，不代表模型已完成理解。"
+            )
         if asset is not None:
             result.update(mime_type=asset.mime_type, size_bytes=len(asset.data), cached=True)
             result["frame_count"] = asset.frame_count
@@ -240,7 +275,7 @@ class ArticleReadingService:
                 )
                 assert asset.preview_data is not None
                 asset = ImageAsset(asset.preview_data, "image/png", ".png")
-            elif send_to_model:
+            elif send_to_model and crop_region is None:
                 result["visual_scope"] = "static_image"
         return result, asset if send_to_model else None
 

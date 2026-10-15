@@ -18,7 +18,7 @@ from ...domain.entities.source import (
     ArticleSource,
     SourceType,
 )
-from ...domain.entities.summary import Summary
+from ...domain.entities.summary import Summary, SummaryEvidence
 from ...domain.value_objects import ArticleContent, ArticleURL, ContentNote
 from ...shared.exceptions import ArticleVersionChangedError
 from ...shared.utils.article_identity import article_digest, normalize_article_url
@@ -170,7 +170,10 @@ class SqlAlchemyArticleRepository:
         model.one_sentence = summary.one_sentence
         model.created_at = summary.created_at
         model.input_hash = summary.input_hash
-        model.generation_json = json.dumps(summary.generation, ensure_ascii=False)
+        generation_data = dict(summary.generation)
+        if summary.evidence:
+            generation_data["__evidence"] = [item.to_dict() for item in summary.evidence]
+        model.generation_json = json.dumps(generation_data, ensure_ascii=False)
 
     def _to_domain(self, model: ArticleModel) -> Article:
         source = self._deserialize_source(model.source_json)
@@ -201,6 +204,8 @@ class SqlAlchemyArticleRepository:
             .limit(1)
         )
         if summary_model is not None:
+            generation_data = json.loads(summary_model.generation_json)
+            evidence_data = generation_data.pop("__evidence", [])
             article.attach_summary(
                 Summary(
                     overview=summary_model.overview,
@@ -209,7 +214,8 @@ class SqlAlchemyArticleRepository:
                     one_sentence=summary_model.one_sentence,
                     created_at=_utc(summary_model.created_at),
                     input_hash=summary_model.input_hash,
-                    generation=json.loads(summary_model.generation_json),
+                    generation=generation_data,
+                    evidence=tuple(SummaryEvidence(**item) for item in evidence_data),
                 )
             )
             object.__setattr__(article, "updated_at", _utc(model.updated_at))

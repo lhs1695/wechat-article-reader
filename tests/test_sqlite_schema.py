@@ -6,7 +6,12 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import create_engine, text
 
-from wechat_article_reader.domain.entities import Article, ArticleSource, Summary
+from wechat_article_reader.domain.entities import (
+    Article,
+    ArticleSource,
+    Summary,
+    SummaryEvidence,
+)
 from wechat_article_reader.domain.value_objects import ArticleContent, ArticleURL
 from wechat_article_reader.infrastructure.persistence import (
     Database,
@@ -51,6 +56,33 @@ def test_refreshed_content_does_not_load_stale_summary(tmp_path, sample_article)
     refreshed = storage.get(sample_article.id)
     assert refreshed is not None
     assert refreshed.summary is None
+
+
+def test_summary_evidence_round_trips_inside_existing_generation_json(tmp_path, sample_article):
+    db_path = tmp_path / "summary-evidence.db"
+    upgrade_database(db_path)
+    database = Database(db_path)
+    storage = SqlAlchemyStorage(database)
+    expected = SummaryEvidence(0, "可核验原文。", 32, 38)
+    sample_article.attach_summary(
+        Summary(
+            overview="带出处摘要",
+            input_hash="a" * 64,
+            generation={"input_char_count": 100, "prompt_version": "structured-v3"},
+            evidence=(expected,),
+        )
+    )
+    try:
+        storage.save(sample_article)
+        loaded = storage.get(sample_article.id)
+        assert loaded is not None and loaded.summary is not None
+        assert loaded.summary.evidence == (expected,)
+        assert loaded.summary.generation == {
+            "input_char_count": 100,
+            "prompt_version": "structured-v3",
+        }
+    finally:
+        database.dispose()
 
 
 def test_new_publish_times_round_trip_in_source_timezone_without_shifting_legacy(

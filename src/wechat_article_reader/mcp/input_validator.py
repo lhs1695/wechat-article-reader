@@ -122,6 +122,21 @@ class MCPInputValidator:
         return cls.validate_int_range(value, field_name="toc_level", lower=1, upper=6)
 
     @classmethod
+    def validate_crop_region(cls, value: object) -> tuple[int, int, int, int] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict) or set(value) != {"x", "y", "width", "height"}:
+            raise MCPValidationError("crop_region 需要包含 x、y、width、height 百分比整数")
+        x, y, width, height = (value[key] for key in ("x", "y", "width", "height"))
+        if any(type(item) is not int for item in (x, y, width, height)):
+            raise MCPValidationError("crop_region 坐标必须是整数百分比")
+        if not (0 <= x < 100 and 0 <= y < 100 and 1 <= width <= 100 and 1 <= height <= 100):
+            raise MCPValidationError("crop_region 百分比范围无效")
+        if x + width > 100 or y + height > 100:
+            raise MCPValidationError("crop_region 超出图片边界")
+        return x, y, width, height
+
+    @classmethod
     def validate_optional_section(cls, value: str | None) -> str | None:
         if value is None:
             return None

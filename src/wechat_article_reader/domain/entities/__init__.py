@@ -2,11 +2,12 @@
 
 from .article import Article
 from .source import ArticleSource, SourceType
-from .summary import Summary
+from .summary import Summary, SummaryEvidence
 
 __all__ = [
     "Article",
     "ArticleSource",
     "SourceType",
     "Summary",
+    "SummaryEvidence",
 ]

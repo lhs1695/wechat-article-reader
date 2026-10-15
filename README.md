@@ -56,10 +56,12 @@
 | `get_cached_article(article_id, toc_level=2, sections_cursor=null, images_cursor=null, expected_reading_revision=null, sections_limit=20, images_limit=20)` | 无 | 只读元数据；按章节和图片游标独立续取 |
 | `read_article(article_id, expected_reading_revision, cursor=0, max_chars=20000, include_images=false, section=null, section_start_cursor=null)` | 无 | 把一页或一节读进模型上下文；完整 MCP 响应最多 128 KiB，必要时缩小正文页；续读原样使用 `next_read` |
 | `export_article(article_id, path, include_images=false, download_images=false)` | 写盘；显式下载时联网 | 导出 Markdown；可同时导出 `.assets` 图片和清单，成功体不含正文 |
-| `read_article_image(article_id, image_id, expected_reading_revision, download_image=false, send_to_model=false)` | 显式下载时联网/写图片缓存；显式提供时返回图像 | 默认仅元数据，图片编号来自阅读页/元数据；客户端需支持视觉 |
+| `read_article_image(article_id, image_id, expected_reading_revision, download_image=false, send_to_model=false, crop_region=null)` | 显式下载时联网/写图片缓存；显式提供时返回图像 | 默认仅元数据；可选百分比区域裁剪仅支持静态图且要求显式 `send_to_model=true` |
 | `summarize_article(article_id, max_length=1200)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
 阅读、缓存元数据与摘要响应中的 `content_notes` 以稳定的 `code`、`message`、`scope` 报告已观察到的抓取 / 阅读范围限制。它不会根据正文短就推断截断，也不代表文章已证明完整；摘要仅覆盖可读取的文字和可用图注。
+
+摘要可能包含 `evidence`：每条引用都由服务端在对应摘要输入的原文正文范围内做逐字、连续匹配，未匹配的模型候选会被丢弃。`input_hash` 标识摘要输入；`input_start` / `input_end` 是该输入中的零起始、左闭右开 Unicode 字符偏移，不能当作文章 Markdown 文件偏移。
 
 **明确不做**
 

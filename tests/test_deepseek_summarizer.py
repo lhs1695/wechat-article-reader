@@ -14,6 +14,7 @@ from openai import (
 )
 
 from wechat_article_reader.application.use_cases.summarize_article import SummarizeArticleUseCase
+from wechat_article_reader.domain.entities import Summary, SummaryEvidence
 from wechat_article_reader.domain.value_objects import ArticleContent
 from wechat_article_reader.features.article_reading import SummarySourceRenderer
 from wechat_article_reader.features.article_reading import projection as projection_module
@@ -221,6 +222,49 @@ def test_summary_generation_conditions_track_projection_version(monkeypatch) -> 
     assert initial["projection_version"] == 1
     assert changed["projection_version"] == 2
     assert initial != changed
+
+
+def test_summary_records_exact_input_character_count(sample_article) -> None:
+    use_case = SummarizeArticleUseCase(
+        SimpleNamespace(is_available=lambda: True, summarize=lambda **_: Summary("summary")),
+        SummarySourceRenderer(),
+    )
+    summary = use_case.execute(sample_article)
+    expected_input = SummarySourceRenderer().render(sample_article)
+    assert summary.generation["input_char_count"] == len(expected_input)
+
+
+def test_summary_evidence_keeps_only_exact_quotes_from_article_body(sample_article) -> None:
+    exact_quote = "这句原文可以逐字核验。"
+    object.__setattr__(sample_article, "content", ArticleContent.from_text(exact_quote))
+    returned = Summary(
+        "有出处的摘要",
+        key_points=("一条要点",),
+        evidence=(
+            SummaryEvidence(0, exact_quote, -1, -1),
+            SummaryEvidence(0, "正文里不存在的引文。", -1, -1),
+        ),
+    )
+    use_case = SummarizeArticleUseCase(
+        SimpleNamespace(is_available=lambda: True, summarize=lambda **_: returned),
+        SummarySourceRenderer(),
+    )
+    summary = use_case.execute(sample_article)
+    rendered_source = SummarySourceRenderer().render(sample_article)
+    assert len(summary.evidence) == 1
+    citation = summary.evidence[0]
+    assert citation.quote == exact_quote
+    assert rendered_source[citation.input_start : citation.input_end] == exact_quote
+    assert summary.input_hash
+
+
+def test_structured_parser_reads_evidence_with_bounded_shape() -> None:
+    summary = DeepSeekSummarizer("key")._parse_response(
+        '{"overview":"摘要","key_points":["要点"],"evidence":'
+        '[{"key_point_index":0,"quote":"正文原句"}],"tags":[],"one_sentence":""}',
+        100,
+    )
+    assert summary.evidence == (SummaryEvidence(0, "正文原句", -1, -1),)
 
 
 def test_summary_rejects_overlong_article_without_calling_model(sample_article) -> None:

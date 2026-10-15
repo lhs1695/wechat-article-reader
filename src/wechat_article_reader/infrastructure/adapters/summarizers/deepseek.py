@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 
-from ....domain.entities import Summary
+from ....domain.entities import Summary, SummaryEvidence
 from ....domain.value_objects import ArticleContent
 from ....shared.constants import (
     DEFAULT_DEEPSEEK_BASE_URL,
@@ -36,9 +36,15 @@ except ImportError:  # pragma: no cover
     _openai_available = False
 
 
+class _EvidenceResponse(BaseModel):
+    key_point_index: int = Field(ge=0, le=4)
+    quote: str = Field(min_length=1, max_length=500)
+
+
 class _SummaryResponse(BaseModel):
     overview: str = Field(min_length=1, max_length=20_000)
     key_points: list[str] = Field(max_length=5)
+    evidence: list[_EvidenceResponse] = Field(default_factory=list, max_length=5)
     tags: list[str] = Field(max_length=8)
     one_sentence: str = Field(max_length=1_000)
 
@@ -201,6 +207,10 @@ class DeepSeekSummarizer(BaseSummarizer):
             key_points=tuple(point.strip() for point in response.key_points if point.strip()),
             tags=tuple(response.tags),
             one_sentence=response.one_sentence.strip(),
+            evidence=tuple(
+                SummaryEvidence(item.key_point_index, item.quote, -1, -1)
+                for item in response.evidence
+            ),
         )
 
     @staticmethod

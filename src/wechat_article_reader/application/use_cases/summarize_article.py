@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ...domain.entities import Article, Summary
+from ...domain.entities import Article, Summary, SummaryEvidence
 from ...domain.value_objects import ArticleContent
 from ...shared.constants import DEFAULT_SUMMARY_MAX_LENGTH
 from ...shared.exceptions import (
@@ -50,7 +50,7 @@ class SummarizeArticleUseCase:
         return {
             **(profile if isinstance(profile, dict) else {}),
             "max_length": max_length,
-            "prompt_version": "structured-v2",
+            "prompt_version": "structured-v3",
             "projection_version": getattr(self._summary_source_renderer, "projection_version", 1),
         }
 
@@ -98,10 +98,16 @@ class SummarizeArticleUseCase:
             )
 
             logger.info("摘要生成成功")
+            generation = self.generation_conditions(max_length)
+            generation["input_char_count"] = len(summary_content.text)
+            evidence = self._verify_evidence(
+                summary.evidence, summary.key_points, summary_content.text
+            )
             return replace(
                 summary,
                 input_hash=hashlib.sha256(summary_content.text.encode("utf-8")).hexdigest(),
-                generation=self.generation_conditions(max_length),
+                generation=generation,
+                evidence=evidence,
             )
 
         except OperationCancelledError:
@@ -113,3 +119,38 @@ class SummarizeArticleUseCase:
         except Exception as exc:
             logger.error("摘要生成失败 error_type={}", type(exc).__name__)
             raise UseCaseError("摘要生成失败") from exc
+
+    @staticmethod
+    def _verify_evidence(
+        candidates: tuple[SummaryEvidence, ...], key_points: tuple[str, ...], source: str
+    ) -> tuple[SummaryEvidence, ...]:
+        """Keep only exact, contiguous quotations located inside the rendered article body."""
+        opening = '<article_source trust="untrusted_web_content">\n'
+        closing = "\n</article_source>"
+        marker_start = source.find(opening)
+        if marker_start < 0:
+            return ()
+        body_start = marker_start + len(opening)
+        body_end = source.find(closing, body_start)
+        if body_end < 0:
+            return ()
+        body = source[body_start:body_end]
+        verified: list[SummaryEvidence] = []
+        seen_points: set[int] = set()
+        for candidate in candidates[:5]:
+            index, quote = candidate.key_point_index, candidate.quote
+            if (
+                type(index) is not int
+                or not 0 <= index < len(key_points)
+                or index in seen_points
+                or not quote
+                or len(quote) > 500
+            ):
+                continue
+            local_start = body.find(quote)
+            if local_start < 0:
+                continue
+            input_start = body_start + local_start
+            verified.append(SummaryEvidence(index, quote, input_start, input_start + len(quote)))
+            seen_points.add(index)
+        return tuple(verified)

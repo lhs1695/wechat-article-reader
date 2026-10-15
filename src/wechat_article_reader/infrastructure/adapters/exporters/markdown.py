@@ -402,6 +402,8 @@ class MarkdownExporter(BaseExporter):
             frontmatter_lines = [
                 "---",
                 f'title: "{_escape_yaml_value(article.title)}"',
+                f'article_id: "{article.id}"',
+                f'article_revision: "{_escape_yaml_value(article.revision)}"',
             ]
             if article.account_name:
                 frontmatter_lines.append(f'source: "{_escape_yaml_value(article.account_name)}"')
@@ -409,6 +411,29 @@ class MarkdownExporter(BaseExporter):
                 frontmatter_lines.append(f'author: "{_escape_yaml_value(article.author)}"')
             if article.publish_time:
                 frontmatter_lines.append(f"date: {article.publish_time_str}")
+            if article.source is not None:
+                frontmatter_lines.append(f'scraped_at: "{article.source.scraped_at.isoformat()}"')
+            if article.summary is not None and article.summary.input_hash:
+                frontmatter_lines.append(
+                    f'summary_input_sha256: "{_escape_yaml_value(article.summary.input_hash)}"'
+                )
+            if article.summary is not None:
+                generation = article.summary.generation
+                input_char_count = generation.get("input_char_count")
+                if isinstance(input_char_count, int) and input_char_count >= 0:
+                    frontmatter_lines.append(f"summary_input_char_count: {input_char_count}")
+                max_length = generation.get("max_length")
+                if isinstance(max_length, int) and max_length >= 0:
+                    frontmatter_lines.append(f"summary_max_length: {max_length}")
+                for field, output_name in (
+                    ("prompt_version", "summary_prompt_version"),
+                    ("projection_version", "summary_projection_version"),
+                ):
+                    value = generation.get(field)
+                    if isinstance(value, str):
+                        frontmatter_lines.append(f'{output_name}: "{_escape_yaml_value(value)}"')
+                    elif isinstance(value, int) and value >= 0:
+                        frontmatter_lines.append(f"{output_name}: {value}")
             frontmatter_lines.append(f'url: "{_escape_yaml_value(str(article.url))}"')
             frontmatter_lines.append(f"word_count: {article.word_count}")
 
@@ -459,6 +484,15 @@ class MarkdownExporter(BaseExporter):
                 parts.extend(f"- {point}" for point in article.summary.key_points)
             if article.summary.one_sentence:
                 parts.extend(["", "### 一句话总结", article.summary.one_sentence])
+            if article.summary.evidence:
+                parts.extend(["", "### 可核验出处"])
+                parts.append(f"输入文本 SHA-256：`{article.summary.input_hash}`")
+                for item in article.summary.evidence:
+                    parts.append(
+                        f"- 要点 {item.key_point_index + 1}，输入字符偏移 "
+                        f"`[{item.input_start}, {item.input_end})`"
+                    )
+                    parts.append(f"> {escape_markdown_text(item.quote)}")
             if article.summary.tags:
                 parts.extend(["", "### 标签", ", ".join(article.summary.tags)])
             parts.append("")

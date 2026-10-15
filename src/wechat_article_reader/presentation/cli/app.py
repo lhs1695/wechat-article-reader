@@ -139,6 +139,38 @@ def db_downgrade(revision: str) -> None:
     console.print(f"[green]数据库已回滚到 {revision}[/green]")
 
 
+@db_commands.command(name="backup")
+@click.option("--output", required=True, type=click.Path(path_type=Path), help="新备份文件路径")
+def db_backup(output: Path) -> None:
+    """创建一致的 SQLite 在线备份；不会覆盖已有文件。"""
+    from ...infrastructure.persistence import Database, backup_database
+
+    database = Database()
+    try:
+        path = backup_database(database, output)
+    except Exception as exc:
+        raise click.ClickException(f"数据库备份失败: {exc}") from exc
+    finally:
+        database.dispose()
+    console.print(f"[green]数据库备份已创建: {path}[/green]")
+
+
+@db_commands.command(name="verify-backup")
+@click.argument("backup_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def db_verify_backup(backup_path: Path) -> None:
+    """在临时数据库中恢复备份并检查完整性及 schema。"""
+    from ...infrastructure.persistence import verify_database_backup
+
+    try:
+        result = verify_database_backup(backup_path)
+    except Exception as exc:
+        raise click.ClickException(f"备份验证失败: {exc}") from exc
+    console.print(
+        f"[green]备份验证通过: integrity={result['integrity']}, "
+        f"schema_revision={result['schema_revision']}[/green]"
+    )
+
+
 @cli.command()
 @click.argument("url")
 @click.option("--no-summary", is_flag=True, help="不生成摘要")

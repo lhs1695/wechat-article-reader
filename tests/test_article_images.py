@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -66,11 +67,23 @@ class Assets:
         self.calls = []
         self.fail = fail
 
-    def load(self, url, *, download=False, cancel_event=None):
-        self.calls.append((url, download))
+    def load(self, url, *, download=False, cancel_event=None, crop_region=None):
+        self.calls.append((url, download, crop_region))
         if self.fail:
             raise ValueError("bad asset")
-        return validate_image(png())
+        data = png()
+        if crop_region is not None:
+            x, y, width, height = crop_region
+            with Image.open(io.BytesIO(data)) as image:
+                left = image.width * x // 100
+                top = image.height * y // 100
+                right = image.width * (x + width) // 100
+                bottom = image.height * (y + height) // 100
+                cropped = image.crop((left, top, right, bottom))
+                output = io.BytesIO()
+                cropped.save(output, format="PNG")
+                data = output.getvalue()
+        return validate_image(data)
 
 
 @pytest.mark.parametrize(
@@ -109,6 +122,17 @@ def test_cached_image_download_is_explicit_and_validated(tmp_path, monkeypatch):
     assert first.mime_type == "image/png" and first.data == png()
     assert cache.load(URL).data == first.data and len(calls) == 1
     assert calls[0]["max_response_bytes"] == 10 * 1024 * 1024
+
+
+def test_cached_image_can_be_cropped_locally_without_modifying_cached_source(tmp_path):
+    original = png()
+    target = tmp_path / f"{hashlib.sha256(URL.encode()).hexdigest()}.image"
+    target.write_bytes(original)
+    asset = CachedImageAssets(tmp_path).load(URL, crop_region=(0, 0, 50, 50))
+    assert asset.mime_type == "image/png"
+    with Image.open(io.BytesIO(asset.data)) as image:
+        assert image.size == (4, 3)
+    assert target.read_bytes() == original
 
 
 @pytest.mark.parametrize(
@@ -476,6 +500,24 @@ def test_visual_provision_is_explicit_and_revision_bound():
     )
     assert content.data == png() and metadata["image_content_provided"]
     assert assets.calls[-1][1] is False
+    with pytest.raises(ValueError, match="send_to_model=true"):
+        service.read_image(
+            item.id,
+            "image-001",
+            expected_reading_revision=reading_revision,
+            crop_region=(0, 0, 50, 50),
+        )
+    metadata, cropped = service.read_image(
+        item.id,
+        "image-001",
+        expected_reading_revision=reading_revision,
+        send_to_model=True,
+        crop_region=(0, 0, 50, 50),
+    )
+    assert cropped is not None and metadata["visual_scope"] == "cropped_region"
+    assert metadata["crop_region_percent"] == {"x": 0, "y": 0, "width": 50, "height": 50}
+    with Image.open(io.BytesIO(cropped.data)) as cropped_image:
+        assert cropped_image.size == (4, 3)
     with pytest.raises(ReadingRevisionChangedError):
         service.read_image(
             item.id, "image-001", expected_reading_revision="old", send_to_model=True
@@ -520,6 +562,21 @@ async def test_real_mcp_result_contains_image_content_not_json_encoded_bytes(mon
     )
     blocks = result[0] if isinstance(result, tuple) else result
     assert all(block.type == "text" for block in blocks)
+
+    result = await mcp.call_tool(
+        "read_article_image",
+        {
+            "article_id": str(item.id),
+            "image_id": "image-001",
+            "expected_reading_revision": f"rp1:{item.revision}",
+            "send_to_model": True,
+            "crop_region": {"x": 0, "y": 0, "width": 50, "height": 50},
+        },
+    )
+    blocks = result[0] if isinstance(result, tuple) else result
+    cropped_block = next(block for block in blocks if block.type == "image")
+    with Image.open(io.BytesIO(base64.b64decode(cropped_block.data))) as cropped_image:
+        assert cropped_image.size == (4, 3)
 
 
 def test_old_image_reference_is_rejected_after_projection_change(monkeypatch) -> None:

@@ -182,10 +182,19 @@ class ArticleWorkflowService:
                         raise ArticleVersionChangedError(current.revision)
                     article = current
             profile = self._summarize_use_case.generation_conditions(max_length)
+            summary_conditions = (
+                {
+                    key: value
+                    for key, value in article.summary.generation.items()
+                    if key != "input_char_count"
+                }
+                if article.summary is not None
+                else {}
+            )
             if (
                 article.summary is not None
                 and article.summary.input_hash
-                and article.summary.generation == profile
+                and summary_conditions == profile
             ):
                 summary = article.summary
             else:
@@ -476,4 +485,6 @@ class ArticleWorkflowService:
             summary.one_sentence,
             summary.created_at.isoformat(),
             summary.generation,
+            summary.input_hash,
+            tuple(item.to_dict() for item in summary.evidence),
         )

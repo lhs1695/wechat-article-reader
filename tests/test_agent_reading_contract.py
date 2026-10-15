@@ -328,11 +328,11 @@ def test_identical_summary_conditions_reuse_but_changed_length_regenerates(stora
     monkeypatch.setattr(
         workflow._summarize_use_case,
         "generation_conditions",
-        lambda length: {**original_conditions(length), "prompt_version": "structured-v3"},
+        lambda length: {**original_conditions(length), "prompt_version": "structured-v4"},
     )
     workflow.summarize_cached(str(item.id))
     assert len(calls) == 4
-    assert storage.get(item.id).summary.generation["prompt_version"] == "structured-v3"
+    assert storage.get(item.id).summary.generation["prompt_version"] == "structured-v4"
     monkeypatch.setattr(
         "wechat_article_reader.features.article_reading.projection.PROJECTION_FORMAT_VERSION", 2
     )

@@ -38,6 +38,8 @@ class SummaryPayload:
     one_sentence: str = ""
     generated_at: str | None = None
     generation: dict[str, object] = field(default_factory=dict)
+    input_hash: str = ""
+    evidence: tuple[dict[str, object], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -47,6 +49,8 @@ class SummaryPayload:
             "one_sentence": self.one_sentence,
             "generated_at": self.generated_at,
             "generation": self.generation,
+            "input_hash": self.input_hash,
+            "evidence": list(self.evidence),
         }
 
 

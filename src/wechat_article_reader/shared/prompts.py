@@ -47,11 +47,13 @@ JSON Schema:
 {{
   "overview": "不超过 {max_length} 个字符的摘要",
   "key_points": ["结论"],
+  "evidence": [{{"key_point_index": 0, "quote": "逐字摘录自正文的短句"}}],
   "tags": ["标签"],
   "one_sentence": "一句话总结"
 }}
 
-约束：key_points 最多 5 条，tags 最多 8 个。
+约束：key_points 最多 5 条，tags 最多 8 个，evidence 最多 5 条。
+每条 evidence 必须对应一个 key_point，quote 必须是文章正文中连续且逐字一致的原文，长度不超过 500 字；找不到可靠原句时省略该条，不得改写或拼接。
 
 {content}
 """

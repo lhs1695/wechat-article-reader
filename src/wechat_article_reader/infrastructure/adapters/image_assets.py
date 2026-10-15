@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from PIL import Image, UnidentifiedImageError
 
-from ...application.ports.outbound.image_asset_port import ImageAsset
+from ...application.ports.outbound.image_asset_port import ImageAsset, ImageCropRegion
 from ...shared.exceptions import OperationCancelledError
 from ...shared.operation import check_operation_deadline
 from ...shared.utils.ssrf_protection import safe_fetch_sync
@@ -106,7 +106,12 @@ class CachedImageAssets:
         self.cache_dir = cache_dir
 
     def load(
-        self, url: str, *, download: bool = False, cancel_event: Event | None = None
+        self,
+        url: str,
+        *,
+        download: bool = False,
+        cancel_event: Event | None = None,
+        crop_region: ImageCropRegion | None = None,
     ) -> ImageAsset:
         if not allowed_image_url(url):
             raise ValueError("图片 URL 不在支持的微信图片 CDN 范围")
@@ -117,7 +122,8 @@ class CachedImageAssets:
         if target.is_file():
             if target.stat().st_size > MAX_IMAGE_BYTES:
                 raise ValueError("缓存图片超过大小限制")
-            return validate_image(target.read_bytes())
+            asset = validate_image(target.read_bytes())
+            return _crop_static_asset(asset, crop_region) if crop_region is not None else asset
         if not download:
             raise ValueError(
                 "图片未缓存；请显式设置 download_image=true，或先用 download_images=true 导出"
@@ -137,7 +143,41 @@ class CachedImageAssets:
         check_operation_deadline(cancel_event)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(target, asset.data, cancel_event)
-        return asset
+        return _crop_static_asset(asset, crop_region) if crop_region is not None else asset
 
     def close(self) -> None:
         pass
+
+
+def _crop_static_asset(asset: ImageAsset, region: ImageCropRegion) -> ImageAsset:
+    if (
+        not isinstance(region, tuple)
+        or len(region) != 4
+        or any(type(value) is not int for value in region)
+    ):
+        raise ValueError("crop_region 必须是四个整数百分比")
+    if asset.frame_count != 1:
+        raise ValueError("动画暂不支持局部裁剪；请按整张图片读取首帧预览")
+    x, y, width, height = region
+    if not (0 <= x < 100 and 0 <= y < 100 and 1 <= width <= 100 and 1 <= height <= 100):
+        raise ValueError("crop_region 百分比范围无效")
+    if x + width > 100 or y + height > 100:
+        raise ValueError("crop_region 超出图片边界")
+
+    try:
+        with Image.open(io.BytesIO(asset.data)) as image:
+            left = image.width * x // 100
+            top = image.height * y // 100
+            right = image.width * (x + width) // 100
+            bottom = image.height * (y + height) // 100
+            if right <= left or bottom <= top:
+                raise ValueError("crop_region 在该图片尺寸上小于一个像素")
+            cropped = image.crop((left, top, right, bottom)).convert("RGBA")
+            buffer = io.BytesIO()
+            cropped.save(buffer, format="PNG", optimize=True)
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("图片局部裁剪失败") from exc
+    data = buffer.getvalue()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError("局部图片超过 10 MiB")
+    return ImageAsset(data, "image/png", ".png")

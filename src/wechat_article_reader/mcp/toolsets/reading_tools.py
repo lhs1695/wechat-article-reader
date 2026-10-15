@@ -466,6 +466,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         expected_reading_revision: str,
         download_image: bool = False,
         send_to_model: bool = False,
+        crop_region: dict[str, int] | None = None,
         ctx: Context | None = None,
     ) -> list[Any]:
         """按阅读页 images 编号读取文章图片，不接受任意 URL。
@@ -475,6 +476,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         必须传 metadata 或阅读页中的 `reading_revision` 作为 `expected_reading_revision`。
         send_to_model=true 才返回 MCP 图像内容，需客户端及模型支持视觉。
         两个开关独立：缓存图片可不联网直接提供；未缓存时须显式允许下载。
+        crop_region 使用 0–100 百分比 {x, y, width, height}，仅适用于静态图且必须显式 send_to_model=true；裁剪在本地完成，不缓存裁剪副本。
         动画仅提供首帧 PNG 预览，并明确标记其他帧未覆盖。
         图文阅读需逐张调用并核对 images 清单；工具无法断言模型已理解图片。
         """
@@ -494,6 +496,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 ),
                 download_image=download_image,
                 send_to_model=send_to_model,
+                crop_region=MCPInputValidator.validate_crop_region(crop_region),
             )
             await report_operation_phase(ctx, 2, "图片读取完成")
             content: list[Any] = [
