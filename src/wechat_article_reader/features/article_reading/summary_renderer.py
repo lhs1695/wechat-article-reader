@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ...domain.entities import Article
+from . import projection
 from .dto import ReadingBlock
 from .projection import ArticleReadingProjector, escape_markdown_text
 from .renderer import MarkdownReadingRenderer
@@ -16,6 +17,10 @@ class SummarySourceRenderer:
     def __init__(self) -> None:
         self._projector = ArticleReadingProjector()
         self._markdown = MarkdownReadingRenderer()
+
+    @property
+    def projection_version(self) -> int:
+        return projection.PROJECTION_FORMAT_VERSION
 
     def render(self, article: Article) -> str:
         projection = self._projector.project(article)

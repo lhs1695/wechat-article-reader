@@ -190,7 +190,7 @@ def fetch(
 @click.argument("source")
 @click.option("--refresh", is_flag=True, help="URL 输入时重新抓取并更新缓存")
 @click.option("--cursor", type=click.IntRange(min=0), default=0, show_default=True)
-@click.option("--expected-revision", default=None, help="续读时传入上一页 revision")
+@click.option("--expected-reading-revision", default=None, help="续读时传入上一页 reading_revision")
 @click.option(
     "--section-start-cursor", type=click.IntRange(min=0), default=None, help="按目录位置选择章节"
 )
@@ -221,7 +221,7 @@ def read_article_command(
     source: str,
     refresh: bool,
     cursor: int,
-    expected_revision: str | None,
+    expected_reading_revision: str | None,
     section_start_cursor: int | None,
     section: str | None,
     max_chars: int,
@@ -239,7 +239,9 @@ def read_article_command(
 
     try:
         if is_url:
-            article_id = service.ingest(source, refresh=refresh).article_id
+            ingest_result = service.ingest(source, refresh=refresh)
+            article_id = ingest_result.article_id
+            expected_reading_revision = expected_reading_revision or ingest_result.reading_revision
         else:
             article_id = str(UUID(source))
 
@@ -249,7 +251,7 @@ def read_article_command(
             max_chars=max_chars,
             section=section,
             include_images=images,
-            expected_revision=expected_revision,
+            expected_reading_revision=expected_reading_revision,
             section_start_cursor=section_start_cursor,
         )
         if output_format == "json":
@@ -260,7 +262,8 @@ def read_article_command(
         if page.has_more:
             click.echo(
                 f"\n---\n继续读取: wechat-article-reader read {article_id} "
-                f"--cursor {page.next_cursor} --expected-revision {page.revision} --max-chars {max_chars}"
+                f"--cursor {page.next_cursor} --expected-reading-revision "
+                f"{page.reading_revision} --max-chars {max_chars}"
                 + (
                     f" --section-start-cursor {page.next_read['section_start_cursor']}"
                     if page.next_read and "section_start_cursor" in page.next_read

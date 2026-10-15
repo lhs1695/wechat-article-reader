@@ -23,7 +23,7 @@ class _Registry:
     def __init__(self) -> None:
         self.tools: dict[str, object] = {}
 
-    def tool(self):
+    def tool(self, **_kwargs):
         def register(function):
             self.tools[function.__name__] = inspect.unwrap(function)
             return function
@@ -64,7 +64,11 @@ def test_read_article_defaults_to_markdown_without_blocks(monkeypatch) -> None:
     )
     registry = _register(monkeypatch, service)
 
-    result = asyncio.run(registry.tools["read_article"]("6ba7b810-9dad-11d1-80b4-00c04fd430c8"))
+    result = asyncio.run(
+        registry.tools["read_article"](
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "rp1:article-revision"
+        )
+    )
 
     assert result["success"] is True
     assert result["source_trust"] == "untrusted_web_content"
@@ -76,6 +80,7 @@ def test_read_article_defaults_to_markdown_without_blocks(monkeypatch) -> None:
         max_chars=20_000,
         include_images=False,
         section=None,
+        expected_reading_revision="rp1:article-revision",
         cancel_event=ANY,
     )
 
@@ -92,7 +97,11 @@ def test_read_article_can_exclude_images(monkeypatch) -> None:
     registry = _register(monkeypatch, service)
 
     result = asyncio.run(
-        registry.tools["read_article"]("6ba7b810-9dad-11d1-80b4-00c04fd430c8", include_images=False)
+        registry.tools["read_article"](
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            "rp1:article-revision",
+            include_images=False,
+        )
     )
 
     assert result["success"] is True
@@ -102,6 +111,7 @@ def test_read_article_can_exclude_images(monkeypatch) -> None:
         max_chars=20_000,
         include_images=False,
         section=None,
+        expected_reading_revision="rp1:article-revision",
         cancel_event=ANY,
     )
 
@@ -142,7 +152,11 @@ def test_read_article_reports_page_too_large(monkeypatch) -> None:
     registry = _register(monkeypatch, service)
 
     with pytest.raises(MCPToolError) as err:
-        asyncio.run(registry.tools["read_article"]("6ba7b810-9dad-11d1-80b4-00c04fd430c8"))
+        asyncio.run(
+            registry.tools["read_article"](
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "rp1:article-revision"
+            )
+        )
 
     assert err.value.code == "page_too_large"
     assert "21000" in err.value.message
@@ -153,7 +167,9 @@ def test_read_article_explains_pagination_parameter_range(monkeypatch) -> None:
 
     with pytest.raises(MCPToolError) as err:
         asyncio.run(
-            registry.tools["read_article"]("6ba7b810-9dad-11d1-80b4-00c04fd430c8", max_chars=800)
+            registry.tools["read_article"](
+                "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "rp1:article-revision", max_chars=800
+            )
         )
 
     assert err.value.code == "invalid_input"
@@ -166,7 +182,7 @@ def test_read_article_documents_pagination_contract(monkeypatch) -> None:
     documentation = inspect.getdoc(registry.tools["read_article"])
 
     assert documentation is not None
-    assert "next_cursor" in documentation
+    assert "expected_reading_revision" in documentation
     assert "20000" in documentation
     assert "include_images=false" in documentation
     assert "section" in documentation
@@ -222,7 +238,10 @@ def test_read_article_passes_section(monkeypatch) -> None:
 
     asyncio.run(
         registry.tools["read_article"](
-            "6ba7b810-9dad-11d1-80b4-00c04fd430c8", cursor=3, section="结语"
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            "rp1:article-revision",
+            cursor=3,
+            section="结语",
         )
     )
 
@@ -232,6 +251,7 @@ def test_read_article_passes_section(monkeypatch) -> None:
         max_chars=20_000,
         include_images=False,
         section="结语",
+        expected_reading_revision="rp1:article-revision",
         cancel_event=ANY,
     )
 
@@ -276,7 +296,7 @@ def _register_wrapped(monkeypatch, service: Mock) -> _Registry:
     )
     registry = _Registry()
 
-    def tool():
+    def tool(**_kwargs):
         def register(function):
             registry.tools[function.__name__] = function
             return function
@@ -301,7 +321,7 @@ def test_repeated_read_article_is_not_rate_limited_by_default(monkeypatch) -> No
     article_id = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
 
     for _ in range(30):
-        result = asyncio.run(registry.tools["read_article"](article_id))
+        result = asyncio.run(registry.tools["read_article"](article_id, "rp1:article-revision"))
         assert result["success"] is True
 
 

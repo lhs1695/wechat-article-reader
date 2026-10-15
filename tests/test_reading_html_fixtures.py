@@ -53,18 +53,21 @@ class _Workflow:
 
 def _pages(service: ArticleReadingService, article_id, *, max_chars: int = 1_000) -> list[str]:
     cursor = 0
-    revision = None
+    reading_revision = None
     pages: list[str] = []
     while True:
         page = service.read(
-            article_id, cursor=cursor, max_chars=max_chars, expected_revision=revision
+            article_id,
+            cursor=cursor,
+            max_chars=max_chars,
+            expected_reading_revision=reading_revision,
         )
         pages.append(page.content_markdown)
         if not page.has_more:
             return pages
         assert page.next_cursor is not None
         cursor = page.next_cursor
-        revision = page.revision
+        reading_revision = page.reading_revision
 
 
 def test_dirty_dom_fixture_keeps_table_code_and_nested_recommend_links() -> None:

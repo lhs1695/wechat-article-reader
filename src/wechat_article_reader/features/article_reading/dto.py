@@ -76,11 +76,14 @@ class IngestResult:
     sections: tuple[ReadingSection, ...] = ()
     block_count: int = 0
     revision: str = ""
+    projection_version: int = 1
+    reading_revision: str = ""
     content_notes: tuple[ContentNote, ...] = ()
     images: tuple[dict[str, object], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["article_revision"] = self.revision
         payload["sections"] = [section.to_dict() for section in self.sections]
         return payload
 
@@ -99,6 +102,8 @@ class ArticleReadingMetadata:
     sections: tuple[ReadingSection, ...]
     block_count: int = 0
     revision: str = ""
+    projection_version: int = 1
+    reading_revision: str = ""
     first_cached_at: str | None = None
     summary_generated_at: str | None = None
     summary_generation: dict[str, object] | None = None
@@ -107,6 +112,7 @@ class ArticleReadingMetadata:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["article_revision"] = self.revision
         payload["sections"] = [section.to_dict() for section in self.sections]
         return payload
 
@@ -124,6 +130,8 @@ class ArticleReadPage:
     chars: int = 0
     section_end_cursor: int | None = None
     revision: str = ""
+    projection_version: int = 1
+    reading_revision: str = ""
     sections_in_page: tuple[ReadingSection, ...] = ()
     image_count: int = 0
     omitted_images: int = 0
@@ -147,6 +155,9 @@ class ArticleReadPage:
             "chars": self.chars if self.chars else len(self.content_markdown),
             "section_end_cursor": self.section_end_cursor,
             "revision": self.revision,
+            "article_revision": self.revision,
+            "projection_version": self.projection_version,
+            "reading_revision": self.reading_revision,
             "sections_in_page": [section.to_dict() for section in self.sections_in_page],
             "image_count": self.image_count,
             "omitted_images": self.omitted_images,

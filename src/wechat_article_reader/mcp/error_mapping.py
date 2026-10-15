@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import NoReturn
 
 from loguru import logger
@@ -10,6 +11,7 @@ from ..features.article_reading import (
     ArticleNotFoundError as ReadingArticleNotFoundError,
 )
 from ..features.article_reading import ArticlePageSizeError, ArticleStorageError
+from ..features.article_reading.service import ReadingRevisionChangedError
 from ..shared.exceptions import (
     ArticleNotFoundError,
     ArticleVersionChangedError,
@@ -40,6 +42,14 @@ def raise_mcp_error(
         raise exc
     if isinstance(exc, OperationCancelledError):
         raise MCPToolError("operation_cancelled", "操作已取消，未提交后续写入") from exc
+    if isinstance(exc, ReadingRevisionChangedError):
+        recovery: dict[str, object] = {"tool": "get_cached_article", "arguments": {}}
+        if article_id is not None:
+            from uuid import UUID
+
+            with suppress(ValueError):
+                recovery["arguments"] = {"article_id": str(UUID(article_id))}
+        raise MCPToolError("reading_changed", str(exc), recovery) from exc
     if isinstance(exc, ArticleVersionChangedError):
         raise MCPToolError(
             "article_changed",

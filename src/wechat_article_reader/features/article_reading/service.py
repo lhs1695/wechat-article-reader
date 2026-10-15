@@ -29,6 +29,7 @@ from .dto import (
 from .images import article_images
 from .projection import ArticleReadingProjector, content_digest, escape_markdown_text, image_count
 from .renderer import MarkdownReadingRenderer
+from .revision import article_reading_revision, reading_projection_version
 
 if TYPE_CHECKING:
     from ...application.ports.outbound.storage_port import StoragePort
@@ -59,6 +60,14 @@ class ArticlePageSizeError(ArticleReadingError):
 
 class SectionSelectionError(ValueError):
     pass
+
+
+class ReadingRevisionChangedError(RuntimeError):
+    """A reading position was created under another projection revision."""
+
+    def __init__(self, current_reading_revision: str):
+        self.current_reading_revision = current_reading_revision
+        super().__init__("阅读投影版本已变化，请重新获取文章目录")
 
 
 class ArticleReadingService:
@@ -173,17 +182,16 @@ class ArticleReadingService:
         *,
         download_image: bool = False,
         send_to_model: bool = False,
-        expected_revision: str | None = None,
+        expected_reading_revision: str,
         cancel_event: Event | None = None,
     ) -> tuple[dict[str, object], ImageAsset | None]:
         if type(download_image) is not bool or type(send_to_model) is not bool:
             raise ValueError("download_image and send_to_model must be booleans")
         article = self._get_article(article_id)
         _check_cancelled(cancel_event)
-        if expected_revision is None:
-            raise ValueError("读取图片必须传元数据或阅读页的 expected_revision")
-        if expected_revision != article.revision:
-            raise ArticleVersionChangedError(article.revision)
+        current_reading_revision = article_reading_revision(article)
+        if expected_reading_revision != current_reading_revision:
+            raise ReadingRevisionChangedError(current_reading_revision)
         image = next(
             (
                 image
@@ -206,6 +214,9 @@ class ArticleReadingService:
             **asdict(image),
             "article_id": str(article.id),
             "revision": article.revision,
+            "article_revision": article.revision,
+            "projection_version": reading_projection_version(),
+            "reading_revision": current_reading_revision,
             "source_trust": "untrusted_web_content",
             "image_content_provided": send_to_model,
             "download_requested": download_image,
@@ -269,6 +280,8 @@ class ArticleReadingService:
             sections=_sections_for_toc(projection.sections, toc_level, len(projection.blocks)),
             block_count=len(projection.blocks),
             revision=persisted.revision,
+            projection_version=reading_projection_version(),
+            reading_revision=article_reading_revision(persisted),
             content_notes=projection.notes,
             images=tuple(asdict(image) for image in article_images(projection)),
         )
@@ -294,6 +307,8 @@ class ArticleReadingService:
             sections=_sections_for_toc(projection.sections, toc_level, len(projection.blocks)),
             block_count=len(projection.blocks),
             revision=article.revision,
+            projection_version=reading_projection_version(),
+            reading_revision=article_reading_revision(article),
             first_cached_at=article.created_at.isoformat(),
             summary_generated_at=article.summary.created_at.isoformat()
             if article.summary
@@ -313,6 +328,7 @@ class ArticleReadingService:
         section: str | None = None,
         section_start_cursor: int | None = None,
         expected_revision: str | None = None,
+        expected_reading_revision: str | None = None,
         cancel_event: Event | None = None,
     ) -> ArticleReadPage:
         if type(cursor) is not int or cursor < 0:
@@ -323,8 +339,14 @@ class ArticleReadingService:
             raise ValueError("include_images must be a boolean")
         article = self._get_article(article_id)
         _check_cancelled(cancel_event)
-        if cursor > 0 and expected_revision is None:
-            raise ValueError("续读必须传 expected_revision；请原样使用上一页 next_read")
+        if (cursor > 0 or section_start_cursor is not None) and expected_reading_revision is None:
+            raise ValueError("续读或按章节位置读取必须传 expected_reading_revision")
+        current_reading_revision = article_reading_revision(article)
+        if (
+            expected_reading_revision is not None
+            and expected_reading_revision != current_reading_revision
+        ):
+            raise ReadingRevisionChangedError(current_reading_revision)
         if expected_revision is not None and expected_revision != article.revision:
             raise ArticleVersionChangedError(article.revision)
         projection = self._project(article)
@@ -403,7 +425,7 @@ class ArticleReadingService:
             next_read = {
                 "article_id": str(article.id),
                 "cursor": next_cursor,
-                "expected_revision": article.revision,
+                "expected_reading_revision": current_reading_revision,
                 "max_chars": max_chars,
                 "include_images": include_images,
             }
@@ -423,6 +445,8 @@ class ArticleReadingService:
             if matched is not None
             else (covering.end_cursor if covering else None),
             revision=article.revision,
+            projection_version=reading_projection_version(),
+            reading_revision=current_reading_revision,
             sections_in_page=tuple(
                 item
                 for item in projection.sections

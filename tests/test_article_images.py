@@ -23,7 +23,9 @@ from wechat_article_reader.features.article_reading import (
     ArticleReadingProjector,
     ArticleReadingService,
 )
+from wechat_article_reader.features.article_reading import projection as projection_module
 from wechat_article_reader.features.article_reading.images import article_images
+from wechat_article_reader.features.article_reading.service import ReadingRevisionChangedError
 from wechat_article_reader.infrastructure.adapters.exporters import bundle as bundle_module
 from wechat_article_reader.infrastructure.adapters.exporters import markdown as markdown_module
 from wechat_article_reader.infrastructure.adapters.exporters.bundle import bundle_markdown
@@ -36,7 +38,6 @@ from wechat_article_reader.infrastructure.adapters.image_assets import (
 from wechat_article_reader.mcp.toolsets.reading_tools import register_reading_tools
 from wechat_article_reader.presentation.cli.app import cli
 from wechat_article_reader.shared.exceptions import (
-    ArticleVersionChangedError,
     ExporterError,
     OperationCancelledError,
 )
@@ -225,7 +226,7 @@ def test_animation_vision_returns_first_frame_with_explicit_scope():
         SimpleNamespace(load=lambda *a, **k: asset),
     )
     metadata, provided = service.read_image(
-        item.id, "image-001", expected_revision=item.revision, send_to_model=True
+        item.id, "image-001", expected_reading_revision=f"rp1:{item.revision}", send_to_model=True
     )
     assert metadata["frame_count"] == 2 and metadata["visual_scope"] == "first_frame"
     assert provided.mime_type == "image/png" and provided.data == asset.preview_data
@@ -461,22 +462,27 @@ def test_visual_provision_is_explicit_and_revision_bound():
     service = ArticleReadingService(SimpleNamespace(), SimpleNamespace(get=lambda _: item), assets)
     page = service.read(item.id)
     assert len(page.images) == 2 and not page.image_content_read
-    metadata, content = service.read_image(item.id, "image-001", expected_revision=item.revision)
+    reading_revision = f"rp1:{item.revision}"
+    metadata, content = service.read_image(
+        item.id, "image-001", expected_reading_revision=reading_revision
+    )
     assert content is None and not assets.calls and not metadata["image_content_provided"]
     metadata, content = service.read_image(
-        item.id, "image-001", expected_revision=item.revision, download_image=True
+        item.id, "image-001", expected_reading_revision=reading_revision, download_image=True
     )
     assert content is None and not metadata["image_content_provided"]
     metadata, content = service.read_image(
-        item.id, "image-001", expected_revision=item.revision, send_to_model=True
+        item.id, "image-001", expected_reading_revision=reading_revision, send_to_model=True
     )
     assert content.data == png() and metadata["image_content_provided"]
     assert assets.calls[-1][1] is False
-    with pytest.raises(ArticleVersionChangedError):
-        service.read_image(item.id, "image-001", expected_revision="old", send_to_model=True)
+    with pytest.raises(ReadingRevisionChangedError):
+        service.read_image(
+            item.id, "image-001", expected_reading_revision="old", send_to_model=True
+        )
     with pytest.raises(ValueError, match="image_id"):
         service.read_image(
-            item.id, "../image", expected_revision=item.revision, download_image=True
+            item.id, "../image", expected_reading_revision=reading_revision, download_image=True
         )
 
 
@@ -497,7 +503,7 @@ async def test_real_mcp_result_contains_image_content_not_json_encoded_bytes(mon
         {
             "article_id": str(item.id),
             "image_id": "image-001",
-            "expected_revision": item.revision,
+            "expected_reading_revision": f"rp1:{item.revision}",
             "send_to_model": True,
         },
     )
@@ -506,10 +512,24 @@ async def test_real_mcp_result_contains_image_content_not_json_encoded_bytes(mon
     assert base64.b64decode(image.data) == png() and image.mimeType == "image/png"
     result = await mcp.call_tool(
         "read_article_image",
-        {"article_id": str(item.id), "image_id": "image-001", "expected_revision": item.revision},
+        {
+            "article_id": str(item.id),
+            "image_id": "image-001",
+            "expected_reading_revision": f"rp1:{item.revision}",
+        },
     )
     blocks = result[0] if isinstance(result, tuple) else result
     assert all(block.type == "text" for block in blocks)
+
+
+def test_old_image_reference_is_rejected_after_projection_change(monkeypatch) -> None:
+    item = article()
+    service = ArticleReadingService(SimpleNamespace(), SimpleNamespace(get=lambda _: item))
+    old_revision = f"rp1:{item.revision}"
+    monkeypatch.setattr(projection_module, "PROJECTION_FORMAT_VERSION", 2)
+
+    with pytest.raises(ReadingRevisionChangedError):
+        service.read_image(item.id, "image-001", expected_reading_revision=old_revision)
 
 
 def test_cli_download_requires_markdown_export():

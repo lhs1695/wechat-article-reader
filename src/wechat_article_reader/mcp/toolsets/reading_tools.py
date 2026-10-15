@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from ...features.article_reading.revision import reading_revision as make_reading_revision
 from ..error_mapping import raise_mcp_error
 from ..execution import run_cancellable
 from ..input_validator import MCPInputValidator, MCPValidationError
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
 
 
 def register_reading_tools(mcp_instance: FastMCP) -> None:
+    from mcp.types import ToolAnnotations
+
     from ...features.article_reading.service import DEFAULT_READ_MAX_CHARS, ArticlePageSizeError
     from ...infrastructure.config import get_container
 
@@ -39,6 +42,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         *,
         sections_cursor: str | None,
         images_cursor: str | None,
+        expected_reading_revision: str | None = None,
         toc_level: int,
         sections_limit: int,
         images_limit: int,
@@ -47,6 +51,19 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         images = raw.pop("images")
         article_id = str(raw["article_id"])
         revision = str(raw["revision"])
+        current_reading_revision = str(
+            raw.get("reading_revision") or make_reading_revision(revision)
+        )
+        raw["article_revision"] = str(raw.get("article_revision") or revision)
+        raw["projection_version"] = raw.get("projection_version", 1)
+        raw["reading_revision"] = current_reading_revision
+        if (
+            expected_reading_revision is not None
+            and expected_reading_revision != current_reading_revision
+        ):
+            from ...features.article_reading.service import ReadingRevisionChangedError
+
+            raise ReadingRevisionChangedError(current_reading_revision)
         title, title_truncated = truncate_utf8(str(raw["title"]), 2048)
         raw["title"] = title
         raw["title_truncated"] = title_truncated
@@ -78,7 +95,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         section_position = decode_metadata_cursor(
             sections_cursor,
             article_id=article_id,
-            article_revision=revision,
+            reading_revision=current_reading_revision,
             kind="sections",
             total_items=len(section_items),
             toc_level=toc_level,
@@ -86,7 +103,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         image_position = decode_metadata_cursor(
             images_cursor,
             article_id=article_id,
-            article_revision=revision,
+            reading_revision=current_reading_revision,
             kind="images",
             total_items=len(image_items),
         )
@@ -95,7 +112,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
             position=section_position,
             limit=sections_limit,
             article_id=article_id,
-            article_revision=revision,
+            reading_revision=current_reading_revision,
             kind="sections",
             toc_level=toc_level,
             sections_limit=sections_limit,
@@ -106,7 +123,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
             position=image_position,
             limit=images_limit,
             article_id=article_id,
-            article_revision=revision,
+            reading_revision=current_reading_revision,
             kind="images",
             toc_level=toc_level,
             sections_limit=sections_limit,
@@ -121,7 +138,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 ("images", "images_page", visible_images, image_position),
             ],
             article_id=article_id,
-            article_revision=revision,
+            reading_revision=current_reading_revision,
             toc_level=toc_level,
             sections_limit=sections_limit,
             images_limit=images_limit,
@@ -142,6 +159,8 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         要整篇 Markdown 文件时，随后调用 export_article 写盘；不要拼接 read_article 分页。
         默认 toc_level=2（H2）。若文章没有这么浅的标题（例如正文全是 H3），目录自动对齐到最浅一层。
         需要更细的纲时再提高 toc_level。篇幅不超过 read_article 的 max_chars 时一次读完。
+        使用 `read_article` 时，将本工具返回的 `reading_revision` 作为必填的
+        `expected_reading_revision` 传入；文章内容或阅读投影规则变化后需重新取 metadata。
         章节和图片清单默认各返回 20 项，可用各自 next 参数从 get_cached_article 续取。
         更长的文章按 sections_page.items 中的标题或 start_cursor 跳读（父章节包含子章节）；
         节内仍超长时跟随 next_read。完整图文理解需另用 read_article_image 核对配图。
@@ -175,6 +194,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()},
                 sections_cursor=None,
                 images_cursor=None,
+                expected_reading_revision=None,
                 toc_level=toc_level,
                 sections_limit=sections_limit,
                 images_limit=images_limit,
@@ -182,13 +202,16 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
         except Exception as exc:
             raise_mcp_error(exc, fallback=("article_fetch_failed", "抓取文章失败"))
 
-    @mcp_instance.tool()
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
+    )
     @secure_tool
     async def get_cached_article(
         article_id: str,
         toc_level: int = 2,
         sections_cursor: str | None = None,
         images_cursor: str | None = None,
+        expected_reading_revision: str | None = None,
         sections_limit: int = DEFAULT_METADATA_PAGE_SIZE,
         images_limit: int = DEFAULT_METADATA_PAGE_SIZE,
     ) -> dict[str, Any]:
@@ -196,6 +219,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
 
         toc_level 与 ingest_article 相同，默认 2。章节和图片清单分别默认每页 20 项，
         上限各 100 项；响应预算较紧时可能返回更少项目。原样调用对应 page.next。
+        若显式传 `expected_reading_revision`，它必须与当前 metadata 一致。
         过长的标题、URL、alt 或 caption 会提供 UTF-8 安全预览并标记 truncated。
         content_notes 只报告有证据的抓取范围限制，不推测文章是否完整。
         """
@@ -222,6 +246,11 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 {"success": True, "source_trust": "untrusted_web_content", **result.to_dict()},
                 sections_cursor=sections_cursor,
                 images_cursor=images_cursor,
+                expected_reading_revision=(
+                    MCPInputValidator.validate_reading_revision(expected_reading_revision)
+                    if expected_reading_revision is not None
+                    else None
+                ),
                 toc_level=toc_level,
                 sections_limit=sections_limit,
                 images_limit=images_limit,
@@ -233,25 +262,27 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 article_id=article_id,
             )
 
-    @mcp_instance.tool()
+    @mcp_instance.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
+    )
     @secure_tool
     async def read_article(
         article_id: str,
+        expected_reading_revision: str,
         cursor: int = 0,
         max_chars: int = DEFAULT_READ_MAX_CHARS,
         include_images: bool = False,
         section: str | None = None,
         section_start_cursor: int | None = None,
-        expected_revision: str | None = None,
     ) -> dict[str, Any]:
         """读取一页缓存 Markdown。只读本地，不联网。
 
         优先传 section（章节标题：精确匹配，或至少两字的唯一前缀）；只返回该节。
         父章节包含子章节。同名标题使用目录的 section_start_cursor 选择。
         与 cursor 同时出现时在该节内续读，cursor 不在节内会明确失败。
-        不传 section 时，全文不超过 max_chars 则一次返回。需要续读时把上次响应的
-        next_read 原样传入（含 next_cursor 对应的 cursor 和 expected_revision）。
-        版本变化返回 article_changed，需重新获取目录。单块含文头超过当前 max_chars
+        不传 section 时，全文不超过 max_chars 则一次返回。首次阅读和续读都必须传当前
+        metadata 的 reading_revision 原样传入 expected_reading_revision；next_read 可原样传入。
+        文章内容或投影规则变化返回 reading_changed，需重新获取目录。单块含文头超过当前 max_chars
         但不超过 20000 时会整块返回；超过 20000 返回 page_too_large，并提供 export_article 建议。
         include_images=false（默认）排除图片语法、保留说明；图片数量与未读取状态会明确返回。
         为满足完整 MCP 响应的 128 KiB UTF-8 序列化预算，稠密元数据或中文正文可能自动缩短本页，
@@ -275,10 +306,9 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                     lower=0,
                     upper=2_147_483_647,
                 )
-            if expected_revision is not None:
-                options["expected_revision"] = MCPInputValidator.validate_revision(
-                    expected_revision
-                )
+            options["expected_reading_revision"] = MCPInputValidator.validate_reading_revision(
+                expected_reading_revision
+            )
             normalized_article_id = MCPInputValidator.validate_article_id(article_id)
             normalized_section = MCPInputValidator.validate_optional_section(section)
             attempted: set[int] = set()
@@ -298,6 +328,15 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                     "source_trust": "untrusted_web_content",
                     **result.to_dict(),
                 }
+                current_reading_revision = result.reading_revision or make_reading_revision(
+                    result.revision
+                )
+                payload["article_revision"] = result.revision
+                payload["projection_version"] = result.projection_version
+                payload["reading_revision"] = current_reading_revision
+                if isinstance(payload.get("next_read"), dict):
+                    payload["next_read"]["expected_reading_revision"] = current_reading_revision
+                    payload["next_read"].pop("expected_revision", None)
                 all_images = payload.pop("images")
                 images_total = len(all_images)
                 visible_images = all_images[:DEFAULT_METADATA_PAGE_SIZE]
@@ -320,7 +359,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                     position=image_position,
                     limit=DEFAULT_METADATA_PAGE_SIZE,
                     article_id=normalized_article_id,
-                    article_revision=result.revision,
+                    reading_revision=current_reading_revision,
                     kind="images",
                     toc_level=2,
                     sections_limit=DEFAULT_METADATA_PAGE_SIZE,
@@ -341,7 +380,7 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 payload = fit_read_response(
                     payload,
                     article_id=normalized_article_id,
-                    article_revision=result.revision,
+                    reading_revision=current_reading_revision,
                     image_position=image_position,
                     toc_level=2,
                     sections_limit=DEFAULT_METADATA_PAGE_SIZE,
@@ -408,13 +447,14 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
     async def read_article_image(
         article_id: str,
         image_id: str,
-        expected_revision: str,
+        expected_reading_revision: str,
         download_image: bool = False,
         send_to_model: bool = False,
     ) -> list[Any]:
         """按阅读页 images 编号读取文章图片，不接受任意 URL。
 
         默认仅返回元数据。download_image=true 允许下载到本地缓存；
+        必须传 metadata 或阅读页中的 `reading_revision` 作为 `expected_reading_revision`。
         send_to_model=true 才返回 MCP 图像内容，需客户端及模型支持视觉。
         两个开关独立：缓存图片可不联网直接提供；未缓存时须显式允许下载。
         动画仅提供首帧 PNG 预览，并明确标记其他帧未覆盖。
@@ -430,7 +470,9 @@ def register_reading_tools(mcp_instance: FastMCP) -> None:
                 service().read_image,
                 MCPInputValidator.validate_article_id(article_id),
                 image_id,
-                expected_revision=MCPInputValidator.validate_revision(expected_revision),
+                expected_reading_revision=MCPInputValidator.validate_reading_revision(
+                    expected_reading_revision
+                ),
                 download_image=download_image,
                 send_to_model=send_to_model,
             )

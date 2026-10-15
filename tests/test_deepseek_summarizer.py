@@ -16,6 +16,7 @@ from openai import (
 from wechat_article_reader.application.use_cases.summarize_article import SummarizeArticleUseCase
 from wechat_article_reader.domain.value_objects import ArticleContent
 from wechat_article_reader.features.article_reading import SummarySourceRenderer
+from wechat_article_reader.features.article_reading import projection as projection_module
 from wechat_article_reader.infrastructure.adapters.summarizers.deepseek import DeepSeekSummarizer
 from wechat_article_reader.shared.exceptions import (
     OperationCancelledError,
@@ -208,6 +209,18 @@ def test_summary_rejects_unavailable_summarizer(sample_article) -> None:
     use_case = SummarizeArticleUseCase(summarizer, SummarySourceRenderer())
     with pytest.raises(SummarizerNotAvailableError):
         use_case.execute(sample_article)
+
+
+def test_summary_generation_conditions_track_projection_version(monkeypatch) -> None:
+    use_case = SummarizeArticleUseCase(SimpleNamespace(), SummarySourceRenderer())
+    initial = use_case.generation_conditions(1_200)
+
+    monkeypatch.setattr(projection_module, "PROJECTION_FORMAT_VERSION", 2)
+
+    changed = use_case.generation_conditions(1_200)
+    assert initial["projection_version"] == 1
+    assert changed["projection_version"] == 2
+    assert initial != changed
 
 
 def test_summary_rejects_overlong_article_without_calling_model(sample_article) -> None:

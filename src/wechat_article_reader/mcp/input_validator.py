@@ -137,3 +137,12 @@ class MCPInputValidator:
         if value is None:
             return None
         return cls.validate_article_id(value)
+
+    @staticmethod
+    def validate_reading_revision(value: object) -> str:
+        """Validate an opaque article-and-projection reading version token."""
+        if not isinstance(value, str) or not 1 <= len(value) <= 256 or not value.isprintable():
+            raise MCPValidationError("expected_reading_revision must be a valid opaque token")
+        if any(character.isspace() for character in value):
+            raise MCPValidationError("expected_reading_revision must be a valid opaque token")
+        return value

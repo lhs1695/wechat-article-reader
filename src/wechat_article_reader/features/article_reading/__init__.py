@@ -12,12 +12,14 @@ from .dto import (
 )
 from .projection import ArticleReadingProjector, content_digest
 from .renderer import MarkdownReadingRenderer
+from .revision import article_reading_revision, reading_projection_version, reading_revision
 from .service import (
     ArticleNotFoundError,
     ArticlePageSizeError,
     ArticleReadingError,
     ArticleReadingService,
     ArticleStorageError,
+    ReadingRevisionChangedError,
 )
 from .summary_renderer import SummarySourceRenderer
 
@@ -36,7 +38,11 @@ __all__ = [
     "MarkdownReadingRenderer",
     "ReadingBlock",
     "ReadingLink",
+    "ReadingRevisionChangedError",
     "ReadingSection",
     "SummarySourceRenderer",
+    "article_reading_revision",
     "content_digest",
+    "reading_projection_version",
+    "reading_revision",
 ]

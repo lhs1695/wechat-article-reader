@@ -47,9 +47,10 @@ class SummarizeArticleUseCase:
     def generation_conditions(self, max_length: int) -> dict[str, object]:
         profile = getattr(self._summarizer, "generation_profile", {})
         return {
+            **(profile if isinstance(profile, dict) else {}),
             "max_length": max_length,
             "prompt_version": "structured-v2",
-            **(profile if isinstance(profile, dict) else {}),
+            "projection_version": getattr(self._summary_source_renderer, "projection_version", 1),
         }
 
     def execute(

@@ -34,7 +34,7 @@ def _registry(monkeypatch, metadata: ArticleReadingMetadata):
     registry = {}
 
     class FakeMCP:
-        def tool(self):
+        def tool(self, **_kwargs):
             def register(function):
                 registry[function.__name__] = inspect.unwrap(function)
                 return function
@@ -126,7 +126,13 @@ def test_fastmcp_outer_result_respects_budget_and_exposes_cursors(monkeypatch) -
     async def call_and_check():
         tools = await mcp.list_tools()
         get_cached = next(tool for tool in tools if tool.name == "get_cached_article")
+        read = next(tool for tool in tools if tool.name == "read_article")
         assert "sections_cursor" in get_cached.inputSchema["properties"]
+        assert get_cached.annotations.readOnlyHint is True
+        assert get_cached.annotations.destructiveHint is False
+        assert get_cached.annotations.openWorldHint is False
+        assert read.annotations.readOnlyHint is True
+        assert "expected_reading_revision" in read.inputSchema["required"]
         converted = await mcp.call_tool(
             "get_cached_article",
             {"article_id": ARTICLE_ID, "sections_limit": 100, "images_limit": 100},
@@ -164,7 +170,7 @@ def test_stale_metadata_cursor_requires_refetch(monkeypatch) -> None:
     _, registry = _registry(monkeypatch, _metadata(count=2))
     cursor = encode_metadata_cursor(
         article_id=ARTICLE_ID,
-        article_revision="old-revision",
+        reading_revision="rp1:old-revision",
         kind="sections",
         offset=1,
         scope_start=0,
@@ -174,16 +180,45 @@ def test_stale_metadata_cursor_requires_refetch(monkeypatch) -> None:
     with pytest.raises(MCPToolError) as error:
         asyncio.run(registry["get_cached_article"](ARTICLE_ID, sections_cursor=cursor))
 
-    assert error.value.code == "article_changed"
+    assert error.value.code == "reading_changed"
     assert error.value.recovery["tool"] == "get_cached_article"
     assert error.value.recovery["arguments"] == {"article_id": ARTICLE_ID}
+
+
+def test_projection_stale_metadata_cursor_has_executable_recovery(monkeypatch) -> None:
+    service, registry = _registry(monkeypatch, _metadata(count=2))
+    cursor = encode_metadata_cursor(
+        article_id=ARTICLE_ID,
+        reading_revision="rp1:article-revision-1",
+        kind="sections",
+        offset=1,
+        scope_start=0,
+        scope_end=2,
+    )
+    monkeypatch.setattr(
+        "wechat_article_reader.features.article_reading.projection.PROJECTION_FORMAT_VERSION", 2
+    )
+
+    with pytest.raises(MCPToolError) as error:
+        asyncio.run(registry["get_cached_article"](ARTICLE_ID, sections_cursor=cursor))
+
+    assert error.value.code == "reading_changed"
+    assert error.value.recovery == {
+        "tool": "get_cached_article",
+        "arguments": {"article_id": ARTICLE_ID},
+    }
+    recovered = asyncio.run(
+        registry[error.value.recovery["tool"]](**error.value.recovery["arguments"])
+    )
+    assert recovered["reading_revision"] == "rp2:article-revision-1"
+    assert service.get_metadata.call_count == 2
 
 
 def test_section_cursor_rejects_changed_toc_depth(monkeypatch) -> None:
     _, registry = _registry(monkeypatch, _metadata(count=2))
     cursor = encode_metadata_cursor(
         article_id=ARTICLE_ID,
-        article_revision="article-revision-1",
+        reading_revision="rp1:article-revision-1",
         kind="sections",
         offset=1,
         scope_start=0,
@@ -223,7 +258,9 @@ def test_read_article_adapts_to_complete_utf8_envelope_budget(monkeypatch) -> No
 
     service.read.side_effect = read
     response = asyncio.run(
-        registry["read_article"](ARTICLE_ID, max_chars=20_000, include_images=False)
+        registry["read_article"](
+            ARTICLE_ID, "rp1:article-revision-1", max_chars=20_000, include_images=False
+        )
     )
 
     assert response["success"] is True
@@ -256,7 +293,7 @@ def test_pure_image_read_page_uses_scoped_metadata_continuation(monkeypatch) -> 
     )
 
     async def read_then_continue():
-        first = await registry["read_article"](ARTICLE_ID)
+        first = await registry["read_article"](ARTICLE_ID, "rp1:article-revision-1")
         assert len(first["images"]["items"]) == 20
         assert first["images"]["total_items"] == 1_000
         assert serialized_tool_result_size(first) <= MAX_TOOL_RESPONSE_BYTES
@@ -301,7 +338,9 @@ def test_read_page_shrinks_long_inline_image_metadata_before_text(monkeypatch) -
     service.read.side_effect = read
 
     async def read_then_continue():
-        first = await registry["read_article"](ARTICLE_ID, max_chars=20_000)
+        first = await registry["read_article"](
+            ARTICLE_ID, "rp1:article-revision-1", max_chars=20_000
+        )
         next_page = await registry["get_cached_article"](**first["images"]["next"]["arguments"])
         return first, next_page
 

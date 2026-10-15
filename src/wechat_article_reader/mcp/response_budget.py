@@ -10,8 +10,8 @@ from typing import Any
 import pydantic_core
 from mcp.types import CallToolResult, TextContent
 
-from ..features.article_reading.projection import PROJECTION_FORMAT_VERSION
-from ..shared.exceptions import ArticleVersionChangedError
+from ..features.article_reading.revision import reading_projection_version
+from ..features.article_reading.service import ReadingRevisionChangedError
 from .input_validator import MCPValidationError
 
 MAX_TOOL_RESPONSE_BYTES = 128 * 1024
@@ -41,7 +41,7 @@ def decode_metadata_cursor(
     token: str | None,
     *,
     article_id: str,
-    article_revision: str,
+    reading_revision: str,
     kind: str,
     total_items: int,
     toc_level: int = 2,
@@ -64,8 +64,8 @@ def decode_metadata_cursor(
         raise MCPValidationError("元数据游标不属于此文章或清单；请重新获取元数据")
     if kind == "sections" and data["t"] != toc_level:
         raise MCPValidationError("章节目录深度已变化；请重新获取 metadata 后续取")
-    if data["r"] != article_revision or data["p"] != PROJECTION_FORMAT_VERSION:
-        raise ArticleVersionChangedError(article_revision)
+    if data["r"] != reading_revision or data["p"] != reading_projection_version():
+        raise ReadingRevisionChangedError(reading_revision)
     values = (data["o"], data["s"], data["e"])
     if any(type(value) is not int for value in values):
         raise MCPValidationError("元数据游标位置无效；请重新获取元数据")
@@ -78,7 +78,7 @@ def decode_metadata_cursor(
 def encode_metadata_cursor(
     *,
     article_id: str,
-    article_revision: str,
+    reading_revision: str,
     kind: str,
     offset: int,
     scope_start: int,
@@ -88,8 +88,8 @@ def encode_metadata_cursor(
     raw = json.dumps(
         {
             "a": article_id,
-            "r": article_revision,
-            "p": PROJECTION_FORMAT_VERSION,
+            "r": reading_revision,
+            "p": reading_projection_version(),
             "k": kind,
             "o": offset,
             "s": scope_start,
@@ -109,7 +109,7 @@ def metadata_page(
     position: MetadataPosition,
     limit: int,
     article_id: str,
-    article_revision: str,
+    reading_revision: str,
     kind: str,
     toc_level: int,
     sections_limit: int,
@@ -123,7 +123,7 @@ def metadata_page(
     if end < position.scope_end:
         cursor = encode_metadata_cursor(
             article_id=article_id,
-            article_revision=article_revision,
+            reading_revision=reading_revision,
             kind=kind,
             offset=end,
             scope_start=position.scope_start,
@@ -132,6 +132,7 @@ def metadata_page(
         )
         arguments: dict[str, Any] = {
             "article_id": article_id,
+            "expected_reading_revision": reading_revision,
             "toc_level": toc_level,
             "sections_limit": sections_limit,
             "images_limit": images_limit,
@@ -155,7 +156,7 @@ def fit_metadata_response(
     *,
     page_states: list[tuple[str, str, list[dict[str, Any]], MetadataPosition]],
     article_id: str,
-    article_revision: str,
+    reading_revision: str,
     toc_level: int,
     sections_limit: int,
     images_limit: int,
@@ -181,7 +182,7 @@ def fit_metadata_response(
         if end < position.scope_end:
             cursor = encode_metadata_cursor(
                 article_id=article_id,
-                article_revision=article_revision,
+                reading_revision=reading_revision,
                 kind=kind,
                 offset=end,
                 scope_start=position.scope_start,
@@ -192,6 +193,7 @@ def fit_metadata_response(
                 "tool": "get_cached_article",
                 "arguments": {
                     "article_id": article_id,
+                    "expected_reading_revision": reading_revision,
                     "toc_level": toc_level,
                     "sections_limit": sections_limit,
                     "images_limit": images_limit,
@@ -205,7 +207,7 @@ def fit_read_response(
     payload: dict[str, Any],
     *,
     article_id: str,
-    article_revision: str,
+    reading_revision: str,
     image_position: MetadataPosition,
     toc_level: int,
     sections_limit: int,
@@ -242,7 +244,7 @@ def fit_read_response(
         if next_offset < image_position.scope_end:
             cursor = encode_metadata_cursor(
                 article_id=article_id,
-                article_revision=article_revision,
+                reading_revision=reading_revision,
                 kind="images",
                 offset=next_offset,
                 scope_start=image_position.scope_start,
@@ -253,6 +255,7 @@ def fit_read_response(
                 "tool": "get_cached_article",
                 "arguments": {
                     "article_id": article_id,
+                    "expected_reading_revision": reading_revision,
                     "toc_level": toc_level,
                     "sections_limit": sections_limit,
                     "images_limit": images_limit,

@@ -94,7 +94,7 @@ def read_article_markdown(
     cursor: int = Query(0, ge=0),
     max_chars: int = Query(20_000, ge=1_000, le=20_000),
     include_images: bool = Query(False),
-    expected_revision: str | None = Query(None),
+    expected_reading_revision: str | None = Query(None),
     section_start_cursor: int | None = Query(None, ge=0),
     container: ContainerDependency = None,  # type: ignore[assignment]
 ) -> dict[str, object]:
@@ -108,7 +108,7 @@ def read_article_markdown(
             cursor=cursor,
             max_chars=max_chars,
             include_images=include_images,
-            expected_revision=expected_revision,
+            expected_reading_revision=expected_reading_revision,
             section_start_cursor=section_start_cursor,
         ).to_dict(),
     }

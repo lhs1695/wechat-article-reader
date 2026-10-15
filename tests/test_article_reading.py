@@ -13,6 +13,8 @@ from wechat_article_reader.features.article_reading import (
     ArticleStorageError,
     MarkdownReadingRenderer,
 )
+from wechat_article_reader.features.article_reading import projection as projection_module
+from wechat_article_reader.features.article_reading.service import ReadingRevisionChangedError
 from wechat_article_reader.shared.exceptions import ArticlePersistenceError
 
 
@@ -235,7 +237,10 @@ def test_read_pages_are_continuous() -> None:
 
     first = service.read(article.id, max_chars=1_000)
     second = service.read(
-        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+        article.id,
+        cursor=first.next_cursor or 0,
+        expected_reading_revision=first.reading_revision,
+        max_chars=1_000,
     )
 
     assert first.has_more is True
@@ -245,6 +250,25 @@ def test_read_pages_are_continuous() -> None:
     assert first.chars == len(first.content_markdown)
     assert "第0段" in first.content_markdown
     assert "第0段" not in second.content_markdown
+
+
+def test_reading_revision_rejects_locations_after_projection_version_changes(monkeypatch) -> None:
+    article = _article("<h2>重复标题</h2><p>第一段</p><h2>重复标题</h2><p>第二段</p>")
+    service = ArticleReadingService(_Workflow(article), _Storage(article))
+    first = service.read(article.id)
+    assert first.reading_revision == f"rp1:{article.revision}"
+
+    monkeypatch.setattr(projection_module, "PROJECTION_FORMAT_VERSION", 2)
+
+    with pytest.raises(ReadingRevisionChangedError):
+        service.read(
+            article.id,
+            expected_reading_revision=first.reading_revision,
+            section_start_cursor=first.sections_in_page[0].start_cursor,
+        )
+
+    current = service.read(article.id)
+    assert current.reading_revision == f"rp2:{article.revision}"
 
 
 def test_text_only_reading_skips_images_and_keeps_cursor_continuous() -> None:
@@ -265,7 +289,7 @@ def test_text_only_reading_skips_images_and_keeps_cursor_continuous() -> None:
     second = service.read(
         article.id,
         cursor=first.next_cursor or 0,
-        expected_revision=first.revision,
+        expected_reading_revision=first.reading_revision,
         max_chars=1_000,
         include_images=False,
     )
@@ -373,7 +397,10 @@ def test_read_does_not_split_list_group_across_pages() -> None:
 
     first = service.read(article.id, max_chars=1_000)
     second = service.read(
-        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+        article.id,
+        cursor=first.next_cursor or 0,
+        expected_reading_revision=first.reading_revision,
+        max_chars=1_000,
     )
 
     assert "一" not in first.content_markdown
@@ -387,7 +414,10 @@ def test_read_prefers_breaking_before_nested_heading() -> None:
 
     first = service.read(article.id, max_chars=1_000)
     second = service.read(
-        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+        article.id,
+        cursor=first.next_cursor or 0,
+        expected_reading_revision=first.reading_revision,
+        max_chars=1_000,
     )
 
     assert "第一部" in first.content_markdown
@@ -455,7 +485,10 @@ def test_headingless_continuation_does_not_inject_synthetic_title() -> None:
 
     first = service.read(article.id, max_chars=1_000)
     second = service.read(
-        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+        article.id,
+        cursor=first.next_cursor or 0,
+        expected_reading_revision=first.reading_revision,
+        max_chars=1_000,
     )
 
     assert first.has_more is True
@@ -511,7 +544,7 @@ def test_section_and_cursor_continue_inside_section_only() -> None:
         article.id,
         section="甲节",
         cursor=first.next_cursor or 0,
-        expected_revision=first.revision,
+        expected_reading_revision=first.reading_revision,
         max_chars=1_000,
     )
 
@@ -553,7 +586,10 @@ def test_continuation_page_uses_current_section_not_later_heading() -> None:
 
     first = service.read(article.id, max_chars=1_000)
     second = service.read(
-        article.id, cursor=first.next_cursor or 0, expected_revision=first.revision, max_chars=1_000
+        article.id,
+        cursor=first.next_cursor or 0,
+        expected_reading_revision=first.reading_revision,
+        max_chars=1_000,
     )
 
     assert first.has_more is True

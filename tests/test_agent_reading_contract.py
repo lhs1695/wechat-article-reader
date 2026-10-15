@@ -23,6 +23,7 @@ from wechat_article_reader.features.article_reading import (
     MarkdownReadingRenderer,
     SummarySourceRenderer,
 )
+from wechat_article_reader.features.article_reading.service import ReadingRevisionChangedError
 from wechat_article_reader.features.article_workflow import ArticleWorkflowService
 from wechat_article_reader.infrastructure.persistence import (
     Database,
@@ -96,11 +97,24 @@ def test_duplicate_long_and_invisible_headings_have_positional_selection():
         service.read(item.id, section="同名")
     second = service.get_metadata(item.id).sections[1]
     assert (
-        "第二处" in service.read(item.id, section_start_cursor=second.start_cursor).content_markdown
+        "第二处"
+        in service.read(
+            item.id,
+            section_start_cursor=second.start_cursor,
+            expected_reading_revision=service.get_metadata(item.id).reading_revision,
+        ).content_markdown
     )
     assert "末尾" in service.read(item.id, section="零宽 标题").content_markdown
     long_item = article(f"<h2>{'标题' * 600}</h2><p>正文</p>")
-    assert "正文" in reader(long_item).read(long_item.id, section_start_cursor=0).content_markdown
+    long_service = reader(long_item)
+    assert (
+        "正文"
+        in long_service.read(
+            long_item.id,
+            section_start_cursor=0,
+            expected_reading_revision=long_service.get_metadata(long_item.id).reading_revision,
+        ).content_markdown
+    )
 
 
 @pytest.mark.parametrize("argument", ["cursor", "max_chars", "section_start_cursor"])
@@ -117,13 +131,16 @@ def test_revision_bound_next_read_and_section_eof():
     assert first.next_read is not None
     next_page = service.read(**first.next_read)
     assert next_page.cursor == first.next_cursor
-    with pytest.raises(ValueError, match="expected_revision"):
+    with pytest.raises(ValueError, match="expected_reading_revision"):
         service.read(item.id, cursor=first.next_cursor)
     object.__setattr__(item, "revision", str(uuid4()))
-    with pytest.raises(ArticleVersionChangedError):
+    with pytest.raises(ReadingRevisionChangedError):
         service.read(**first.next_read)
     eof = service.read(
-        item.id, cursor=first.section_end_cursor, section="章节", expected_revision=item.revision
+        item.id,
+        cursor=first.section_end_cursor,
+        section="章节",
+        expected_reading_revision=f"rp1:{item.revision}",
     )
     assert not eof.has_more and eof.word_count == 0
 
@@ -315,6 +332,12 @@ def test_identical_summary_conditions_reuse_but_changed_length_regenerates(stora
     workflow.summarize_cached(str(item.id))
     assert len(calls) == 4
     assert storage.get(item.id).summary.generation["prompt_version"] == "structured-v3"
+    monkeypatch.setattr(
+        "wechat_article_reader.features.article_reading.projection.PROJECTION_FORMAT_VERSION", 2
+    )
+    workflow.summarize_cached(str(item.id))
+    assert len(calls) == 5
+    assert storage.get(item.id).summary.generation["projection_version"] == 2
 
 
 def test_cancel_after_flush_rolls_back(storage):
