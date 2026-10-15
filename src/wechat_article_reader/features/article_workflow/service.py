@@ -211,13 +211,54 @@ class ArticleWorkflowService:
         article_id: str | UUID,
         max_length: int = DEFAULT_SUMMARY_MAX_LENGTH,
         *,
+        expected_revision: str | None = None,
         cancel_event: Event | None = None,
     ) -> ArticleSummaryPayload:
+        article = self._require_cached_article(article_id)
+        self._ensure_revision(article, expected_revision)
         return self.summarize_existing(
-            self._require_cached_article(article_id),
+            article,
             max_length=max_length,
             cancel_event=cancel_event,
         )
+
+    def export_cached(
+        self,
+        article_id: str | UUID,
+        *,
+        expected_revision: str,
+        target: str = "markdown",
+        skip_summary: bool = False,
+        include_body: bool = True,
+        include_images: bool | None = None,
+        path: str | None = None,
+        download_images: bool = False,
+    ) -> ArticleExportPayload:
+        article = self._require_cached_article(article_id)
+        self._ensure_revision(article, expected_revision)
+        summary = article.summary if skip_summary else None
+        if not skip_summary:
+            article, summary = self._resolve_summary(
+                article, max_length=DEFAULT_SUMMARY_MAX_LENGTH, cancel_event=None
+            )
+        export_path = self.export_existing(
+            article,
+            target=target,
+            path=path,
+            include_body=include_body,
+            include_images=include_images,
+            download_images=download_images,
+        )
+        return ArticleExportPayload(self._to_metadata(article), export_path, summary is not None)
+
+    @staticmethod
+    def _ensure_revision(article: Article, expected_revision: str | None) -> None:
+        if expected_revision is None:
+            return
+        if article.revision != expected_revision:
+            from ...shared.exceptions import ArticleVersionChangedError
+
+            raise ArticleVersionChangedError(article.revision)
 
     def batch_summarize_cached(
         self,
@@ -421,6 +462,7 @@ class ArticleWorkflowService:
             article.account_name,
             article.publish_time_str,
             article.word_count,
+            article_id=str(article.id),
             revision=article.revision,
             content_notes=tuple(note.to_dict() for note in notes),
         )

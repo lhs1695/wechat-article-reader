@@ -4,6 +4,8 @@
 
 给 Agent 的微信公众号阅读 MCP（个人项目）。一篇公众号 URL → SQLite → **同一套 Markdown 投影** → 导出。摘要可选，没有 API Key 也能导出正文。
 
+当前版本 **4.0.0** 包含破坏性阅读契约升级；旧的 `expected_revision` 阅读参数迁移到 `expected_reading_revision`。Web Markdown GET 现在只读缓存身份，先用 POST fetch 获取文章 ID 和版本。迁移示例见 [用法](docs/用法.md#阅读契约迁移)。
+
 ```text
 微信公众号 URL
     → 安全抓取 / SQLite 缓存
@@ -51,10 +53,10 @@
 | 工具 | 副作用 | 作用 |
 | --- | --- | --- |
 | `ingest_article(url, refresh=false, toc_level=2, sections_limit=20, images_limit=20)` | 联网 + 写 SQLite | 唯一抓公众号入口；章节和图片清单分别分页 |
-| `get_cached_article(article_id, toc_level=2, sections_cursor=null, images_cursor=null, sections_limit=20, images_limit=20)` | 无 | 只读元数据；按章节和图片游标独立续取 |
-| `read_article(article_id, cursor=0, max_chars=20000, include_images=false, section=null, section_start_cursor=null, expected_revision=null)` | 无 | 把一页或一节读进模型上下文；完整 MCP 响应最多 128 KiB，必要时缩小正文页；续读原样使用 `next_read` |
+| `get_cached_article(article_id, toc_level=2, sections_cursor=null, images_cursor=null, expected_reading_revision=null, sections_limit=20, images_limit=20)` | 无 | 只读元数据；按章节和图片游标独立续取 |
+| `read_article(article_id, expected_reading_revision, cursor=0, max_chars=20000, include_images=false, section=null, section_start_cursor=null)` | 无 | 把一页或一节读进模型上下文；完整 MCP 响应最多 128 KiB，必要时缩小正文页；续读原样使用 `next_read` |
 | `export_article(article_id, path, include_images=false, download_images=false)` | 写盘；显式下载时联网 | 导出 Markdown；可同时导出 `.assets` 图片和清单，成功体不含正文 |
-| `read_article_image(article_id, image_id, expected_revision, download_image=false, send_to_model=false)` | 显式下载时联网/写图片缓存；显式提供时返回图像 | 默认仅元数据，图片编号来自阅读页/元数据；客户端需支持视觉 |
+| `read_article_image(article_id, image_id, expected_reading_revision, download_image=false, send_to_model=false)` | 显式下载时联网/写图片缓存；显式提供时返回图像 | 默认仅元数据，图片编号来自阅读页/元数据；客户端需支持视觉 |
 | `summarize_article(article_id, max_length=1200)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
 
 阅读、缓存元数据与摘要响应中的 `content_notes` 以稳定的 `code`、`message`、`scope` 报告已观察到的抓取 / 阅读范围限制。它不会根据正文短就推断截断，也不代表文章已证明完整；摘要仅覆盖可读取的文字和可用图注。
@@ -67,7 +69,7 @@
 - 不把一篇超长文自动 MapReduce 成「看起来完整」的摘要；超过模型输入上限就明确失败。
 - 不把内部 block ID、content hash 当成对外 API。
 
-图片只在 Markdown 里保留远程 HTTPS 链接和说明文字。三个入口默认都不含图，需要时显式打开：MCP `include_images=true`，CLI `--images`，Web `GET /api/article/markdown?include_images=true`。
+图片只在 Markdown 里保留远程 HTTPS 链接和说明文字。三个入口默认都不含图，需要时显式打开：MCP `include_images=true`，CLI `--images`，Web `GET /api/article/markdown?article_id=...&expected_reading_revision=...&include_images=true`。
 
 Markdown 导出保留代码缩进、空行、语言标记、嵌套列表、引用与行内格式。普通长段落的内部分块会合并；代码和表格保持完整。目标格式为 GFM；合并单元格等复杂表格保留经过清洗的 HTML，阅读器需要支持 HTML 才能显示这些布局。
 
@@ -76,7 +78,7 @@ Markdown 导出保留代码缩进、空行、语言标记、嵌套列表、引�
 - 要整篇 md 落盘：`ingest_article` 之后 `export_article`，不要用 `read_article` 翻页拼接。
 - 不传 `section` 且全文不超过 `max_chars`（默认 20000）就一次返回，不要先翻页。
 - `section` 返回该章及其子章节；重名标题用目录中的 `start_cursor` 作为 `section_start_cursor`。
-- `cursor` 是内容块索引；续读原样传响应中的 `next_read`（包含 `expected_revision`）。文章变化返回 `article_changed`，重新获取目录后阅读。
+- `cursor` 是内容块索引；续读原样传响应中的 `next_read`（包含 `expected_reading_revision`）。文章或投影规则变化返回 `reading_changed`，重新获取目录后阅读。
 - 失败是 MCP **isError**（`code: 说明`），不是 `{success:false}`。工具成功体均标记 `source_trust: "untrusted_web_content"`；图片工具用文本元数据加可选图像内容块。
 
 ## 为什么这么设计
@@ -85,7 +87,7 @@ Markdown 导出保留代码缩进、空行、语言标记、嵌套列表、引�
 - **超长文明确失败，不自动 MapReduce。** 超过 `DEEPSEEK__MAX_INPUT_CHARS` 就 `article_too_long`，交给分页阅读或 `export_article`。代价是没有一份「看起来完整」的自动摘要，也不服务端偷偷截断再假装读完。
 - **三个入口默认不含图。** 装饰图不该占 Agent 上下文；需要时显式打开。代价是默认页只留说明文字，看不到配图。
 - **失败走 MCP isError，而不是 `{success:false}` 假成功体。** 宿主能把失败和正文分开，模型不该在成功通道里解析错误对象。代价是客户端必须按协议处理 isError。
-- **`cursor` 是内容块索引。** 与不透明 `revision` 绑定；续读使用 `next_read`。内部 block ID / content hash 不作为对外 API。
+- **`cursor` 是内容块索引。** 与 `reading_revision`（文章 revision + 投影版本）绑定；续读使用 `next_read`。内部 block ID / content hash 不作为对外 API。
 - **CLI / Web / MCP 共用同一套服务与同一份 Markdown 投影。** 一处改分页或无图默认，三个入口一起变。代价是入口层变薄，不能为某个入口偷偷换一套 HTML 解析。
 - **整篇 md 走 `export_article`，分页是读接口。** 本地 Agent 要文件时 MCP 写盘并只返回路径，避免把全文塞进 tool 结果。`read_article` 管进上下文的一页/一节。人用 CLI `fetch --export` 仍然可用。
 - **缓存摘要绑定正文版本。** 刷新文章后，旧正文的摘要不会再显示为当前摘要；需要时重新调用 `summarize_article`。

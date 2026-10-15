@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from ...features.article_reading import ArticlePageSizeError
+from ...features.article_reading.service import ReadingRevisionChangedError
 from ...shared.exceptions import (
     ArticleNotFoundError,
     ArticleVersionChangedError,
@@ -23,18 +24,42 @@ from ...shared.exceptions import (
 
 
 def map_exception(exc: Exception, request_id: str) -> tuple[int, dict[str, Any]]:
-    if isinstance(exc, (ArticleVersionChangedError, ArticlePageSizeError, ValueError)):
+    if isinstance(exc, ReadingRevisionChangedError):
         return (
-            409 if isinstance(exc, ArticleVersionChangedError) else 400,
+            409,
+            {
+                "success": False,
+                "error": str(exc),
+                "error_code": "reading_changed",
+                "request_id": request_id,
+                "current_reading_revision": exc.current_reading_revision,
+                "recovery": {"action": "POST /api/article/fetch", "refresh": False},
+            },
+        )
+    if isinstance(exc, (ArticleVersionChangedError, ArticlePageSizeError, ValueError)):
+        version_change = exc if isinstance(exc, ArticleVersionChangedError) else None
+        return (
+            409 if version_change is not None else 400,
             {
                 "success": False,
                 "error": str(exc),
                 "error_code": "article_changed"
-                if isinstance(exc, ArticleVersionChangedError)
+                if version_change is not None
                 else "page_too_large"
                 if isinstance(exc, ArticlePageSizeError)
                 else "invalid_input",
                 "request_id": request_id,
+                **(
+                    {
+                        "current_revision": version_change.current_revision,
+                        "recovery": {
+                            "action": "POST /api/article/fetch",
+                            "refresh": False,
+                        },
+                    }
+                    if version_change is not None
+                    else {}
+                ),
             },
         )
     if isinstance(exc, ScraperTimeoutError):

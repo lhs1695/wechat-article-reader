@@ -6,7 +6,7 @@ import importlib.metadata as _metadata
 try:
     VERSION = _metadata.version("wechat-article-reader")
 except _metadata.PackageNotFoundError:
-    VERSION = "3.1.0"  # fallback（开发模式未 pip install -e . 时）
+    VERSION = "4.0.0"  # fallback（开发模式未 pip install -e . 时）
 
 APP_NAME = "WeChat Article Reader"
 

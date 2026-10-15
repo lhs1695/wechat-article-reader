@@ -13,6 +13,7 @@ class ArticleMetadataPayload:
     account_name: str | None
     publish_time: str
     word_count: int
+    article_id: str = field(default="", kw_only=True)
     revision: str = field(default="", kw_only=True)
     content_notes: tuple[dict[str, str], ...] = field(default=(), kw_only=True)
 

@@ -74,15 +74,23 @@ def fetch_article(
     container: ContainerDependency,
 ) -> FetchResponse:
     try:
-        payload = container.article_workflow_service.fetch(req.url, content_limit=None)
+        article = container.article_workflow_service.fetch_article(
+            req.url, force_refresh=req.refresh
+        )
+        metadata = container.article_reading_service.get_metadata(article.id)
         return FetchResponse(
             success=True,
-            title=payload.title,
-            author=str(payload.author or ""),
-            account_name=str(payload.account_name or ""),
-            word_count=payload.word_count,
-            publish_time=payload.publish_time,
-            content_html=sanitize_html(payload.content_html),
+            article_id=metadata.article_id,
+            revision=metadata.revision,
+            reading_revision=metadata.reading_revision,
+            projection_version=metadata.projection_version,
+            title=metadata.title,
+            author=str(metadata.author or ""),
+            account_name=str(metadata.account_name or ""),
+            word_count=metadata.word_count,
+            publish_time=metadata.publish_time,
+            content_html=sanitize_html(article.content_html),
+            content_notes=[note.to_dict() for note in metadata.content_notes],
         )
     except Exception:
         raise
@@ -90,17 +98,15 @@ def fetch_article(
 
 @router.get("/article/markdown")
 def read_article_markdown(
-    url: str = Query(..., min_length=1, max_length=2048),
+    article_id: str = Query(..., min_length=1, max_length=64),
+    expected_reading_revision: str = Query(..., min_length=1, max_length=128),
     cursor: int = Query(0, ge=0),
     max_chars: int = Query(20_000, ge=1_000, le=20_000),
     include_images: bool = Query(False),
-    expected_reading_revision: str | None = Query(None),
     section_start_cursor: int | None = Query(None, ge=0),
     container: ContainerDependency = None,  # type: ignore[assignment]
 ) -> dict[str, object]:
     """Return the same paginated Markdown projection used by the MCP reader."""
-    FetchRequest(url=url)
-    article_id = container.article_reading_service.ingest(url).article_id
     return {
         "success": True,
         **container.article_reading_service.read(
@@ -130,17 +136,27 @@ def summarize_article(
             except ImportError:
                 return f"<pre>{escape_html(md)}</pre>"
 
-        payload = container.article_workflow_service.summarize(
-            req.url,
+        payload = container.article_workflow_service.summarize_cached(
+            req.article_id,
             max_length=req.max_length,
+            expected_revision=req.expected_revision,
         )
+        metadata = container.article_reading_service.get_metadata(req.article_id)
+        if metadata.revision != payload.article.revision:
+            from ....shared.exceptions import ArticleVersionChangedError
+
+            raise ArticleVersionChangedError(metadata.revision)
         return SummarizeResponse(
             success=True,
+            article_id=req.article_id,
+            revision=payload.article.revision,
+            reading_revision=metadata.reading_revision,
             summary=payload.summary.overview,
             summary_html=_render(payload.summary.overview),
             key_points=list(payload.summary.key_points),
             tags=list(payload.summary.tags),
             one_sentence=payload.summary.one_sentence,
+            content_notes=[dict(note) for note in payload.article.content_notes],
         )
     except Exception:
         raise
@@ -153,16 +169,15 @@ def export_article(
 ) -> FetchResponse:
     try:
         image_options: dict[str, Any] = {"download_images": True} if req.download_images else {}
-        payload = container.article_workflow_service.export(
-            req.url,
+        payload = container.article_workflow_service.export_cached(
+            req.article_id,
+            expected_revision=req.expected_revision,
             target=req.target,
             include_images=req.include_images
             if req.include_images is not None
             else req.target != "markdown",
             **image_options,
             skip_summary=req.skip_summary,
-            summary_content=req.summary_content,
-            key_points=req.key_points,
             include_body=req.include_body,
         )
         export_path = payload.export_path
@@ -173,6 +188,8 @@ def export_article(
         file_id = _public_output_id(export_path)
         return FetchResponse(
             success=True,
+            article_id=payload.article.article_id,
+            revision=payload.article.revision,
             title=f"已导出: {file_id}",
             word_count=payload.article.word_count,
             export_path=file_id,

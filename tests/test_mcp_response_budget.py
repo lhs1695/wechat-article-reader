@@ -250,7 +250,7 @@ def test_read_article_adapts_to_complete_utf8_envelope_budget(monkeypatch) -> No
             next_read={
                 "article_id": ARTICLE_ID,
                 "cursor": next_cursor,
-                "expected_revision": "article-revision-1",
+                "expected_reading_revision": "rp1:article-revision-1",
                 "max_chars": max_chars,
                 "include_images": False,
             },

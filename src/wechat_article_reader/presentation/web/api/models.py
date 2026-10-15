@@ -19,28 +19,25 @@ def _validate_http_url(value: str) -> str:
 
 class FetchRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
+    refresh: bool = False
 
     _validate_url = field_validator("url")(_validate_http_url)
 
 
 class SummarizeRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=2048)
+    article_id: str = Field(min_length=1, max_length=64)
+    expected_revision: str = Field(min_length=1, max_length=128)
     max_length: int = Field(default=DEFAULT_SUMMARY_MAX_LENGTH, ge=50, le=10_000)
-
-    _validate_url = field_validator("url")(_validate_http_url)
 
 
 class ExportRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=2048)
+    article_id: str = Field(min_length=1, max_length=64)
+    expected_revision: str = Field(min_length=1, max_length=128)
     target: str = "markdown"
     skip_summary: bool = False
-    summary_content: str = ""
-    key_points: list[str] = Field(default_factory=list)
     include_body: bool = True
     include_images: bool | None = None
     download_images: bool = False
-
-    _validate_url = field_validator("url")(_validate_http_url)
 
 
 class BatchRequest(BaseModel):
@@ -61,12 +58,17 @@ class BatchRequest(BaseModel):
 
 class FetchResponse(BaseModel):
     success: bool
+    article_id: str = ""
+    revision: str = ""
+    reading_revision: str = ""
+    projection_version: int = 0
     title: str = ""
     author: str = ""
     account_name: str = ""
     word_count: int = 0
     publish_time: str = ""
     content_html: str = ""
+    content_notes: list[dict[str, str]] = Field(default_factory=list)
     export_path: str = ""
     download_url: str = ""
     error: str = ""
@@ -74,11 +76,15 @@ class FetchResponse(BaseModel):
 
 class SummarizeResponse(BaseModel):
     success: bool
+    article_id: str = ""
+    revision: str = ""
+    reading_revision: str = ""
     summary: str = ""
     summary_html: str = ""
     key_points: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     one_sentence: str = ""
+    content_notes: list[dict[str, str]] = Field(default_factory=list)
     error: str = ""
 
 
@@ -106,5 +112,8 @@ class HealthResponse(BaseModel):
 class ErrorResponse(BaseModel):
     success: bool = False
     error: str
-    error_code: int
+    error_code: int | str
     request_id: str
+    recovery: dict[str, object] | None = None
+    current_revision: str | None = None
+    current_reading_revision: str | None = None

@@ -562,7 +562,9 @@ def test_web_offline_export_downloads_complete_zip(tmp_path, monkeypatch):
     exporter = MarkdownExporter(image_assets=Assets())
     target = tmp_path / "article.md"
 
-    def export(url, **kwargs):
+    def export(article_id, expected_revision, **kwargs):
+        assert article_id == str(item.id)
+        assert expected_revision == item.revision
         seen.append(kwargs)
         exporter.export(
             item,
@@ -571,21 +573,25 @@ def test_web_offline_export_downloads_complete_zip(tmp_path, monkeypatch):
             download_images=kwargs["download_images"],
         )
         return SimpleNamespace(
-            export_path=str(target), article=SimpleNamespace(word_count=item.word_count)
+            export_path=str(target),
+            article=SimpleNamespace(
+                article_id=str(item.id), revision=item.revision, word_count=item.word_count
+            ),
         )
 
     monkeypatch.setattr(
         "wechat_article_reader.presentation.web.api.endpoints._output_root", lambda: tmp_path
     )
     app = create_app(
-        container=SimpleNamespace(article_workflow_service=SimpleNamespace(export=export)),
+        container=SimpleNamespace(article_workflow_service=SimpleNamespace(export_cached=export)),
         prewarm=False,
     )
     client = TestClient(app)
     response = client.post(
         "/api/article/export",
         json={
-            "url": str(item.url),
+            "article_id": str(item.id),
+            "expected_revision": item.revision,
             "skip_summary": True,
             "download_images": True,
             "include_images": False,

@@ -11,10 +11,10 @@ from wechat_article_reader.application.use_cases.summarize_article import Summar
 from wechat_article_reader.domain.entities import Article, Summary
 from wechat_article_reader.domain.value_objects import ArticleContent, ArticleURL
 from wechat_article_reader.features.article_reading import SummarySourceRenderer
+from wechat_article_reader.features.article_reading.service import ReadingRevisionChangedError
 from wechat_article_reader.features.article_workflow import ArticleWorkflowService
 from wechat_article_reader.features.article_workflow.dto import (
     ArticleExportPayload,
-    ArticleFetchPayload,
     ArticleMetadataPayload,
     ArticleSummaryPayload,
     BatchExportItemPayload,
@@ -47,19 +47,44 @@ def test_article_markdown_endpoint_reuses_reading_service() -> None:
         )
 
     reading = SimpleNamespace(
-        ingest=lambda url: SimpleNamespace(article_id="article-1"),
         read=read,
     )
     app = create_app(container=SimpleNamespace(article_reading_service=reading), prewarm=False)
 
     response = TestClient(app).get(
         "/api/article/markdown",
-        params={"url": "https://mp.weixin.qq.com/s/example"},
+        params={
+            "article_id": "article-1",
+            "expected_reading_revision": "rp1:revision",
+        },
     )
 
     assert response.status_code == 200
     assert response.json()["content_markdown"] == "# 标题\n\n正文"
     assert seen == [False]
+
+
+def test_article_markdown_revision_error_keeps_request_id_and_recovery() -> None:
+    def read(*_args, **_kwargs):
+        raise ReadingRevisionChangedError("rp2:current-revision")
+
+    reading = SimpleNamespace(read=read)
+    app = create_app(container=SimpleNamespace(article_reading_service=reading), prewarm=False)
+
+    response = TestClient(app, raise_server_exceptions=False).get(
+        "/api/article/markdown",
+        params={
+            "article_id": "article-1",
+            "expected_reading_revision": "rp1:old-revision",
+        },
+        headers={"X-Request-ID": "web-contract-test"},
+    )
+
+    assert response.status_code == 409
+    assert response.headers["X-Request-ID"] == "web-contract-test"
+    assert response.json()["request_id"] == "web-contract-test"
+    assert response.json()["error_code"] == "reading_changed"
+    assert response.json()["recovery"]["action"] == "POST /api/article/fetch"
 
 
 def test_summarize_endpoint_returns_complete_structured_summary() -> None:
@@ -71,6 +96,8 @@ def test_summarize_endpoint_returns_complete_structured_summary() -> None:
             account_name=None,
             publish_time="",
             word_count=100,
+            article_id="article-1",
+            revision="article-revision",
         ),
         summary=SummaryPayload(
             overview="概述内容",
@@ -81,22 +108,40 @@ def test_summarize_endpoint_returns_complete_structured_summary() -> None:
     )
     requested_lengths: list[int] = []
 
-    def summarize(url: str, max_length: int) -> ArticleSummaryPayload:
+    def summarize_cached(
+        article_id: str, max_length: int, expected_revision: str
+    ) -> ArticleSummaryPayload:
+        assert article_id == "article-1"
+        assert expected_revision == "article-revision"
         requested_lengths.append(max_length)
         return payload
 
-    workflow = SimpleNamespace(summarize=summarize)
-    app = create_app(container=SimpleNamespace(article_workflow_service=workflow), prewarm=False)
+    workflow = SimpleNamespace(summarize_cached=summarize_cached)
+    reading = SimpleNamespace(
+        get_metadata=lambda _: SimpleNamespace(
+            revision="article-revision", reading_revision="rp1:revision"
+        )
+    )
+    app = create_app(
+        container=SimpleNamespace(
+            article_workflow_service=workflow, article_reading_service=reading
+        ),
+        prewarm=False,
+    )
 
     response = TestClient(app).post(
         "/api/article/summarize",
-        json={"url": "https://mp.weixin.qq.com/s/example"},
+        json={"article_id": "article-1", "expected_revision": "article-revision"},
     )
 
     assert response.status_code == 200
     assert requested_lengths == [1_200]
     assert response.json() == {
         "success": True,
+        "article_id": "article-1",
+        "revision": "article-revision",
+        "reading_revision": "rp1:revision",
+        "content_notes": [],
         "summary": "概述内容",
         "summary_html": "<p>概述内容</p>\n",
         "key_points": ["要点一", "要点二"],
@@ -157,19 +202,35 @@ def _metadata() -> ArticleMetadataPayload:
     )
 
 
-def test_fetch_endpoint_returns_article_metadata() -> None:
-    payload = ArticleFetchPayload(
-        **_metadata().__dict__,
-        overview="正文",
-        content_html="<p>正文</p>",
-        content_truncated=False,
+def test_fetch_endpoint_returns_persisted_article_identity() -> None:
+    article = SimpleNamespace(id="article-1", content_html="<p>正文</p>")
+    metadata = SimpleNamespace(
+        article_id="article-1",
+        revision="article-revision",
+        reading_revision="rp2:article-revision",
+        projection_version=2,
+        title="测试文章",
+        author="作者",
+        account_name="账号",
+        word_count=100,
+        publish_time="2026-01-01",
+        content_notes=(),
     )
-    workflow = SimpleNamespace(fetch=lambda url, content_limit=None: payload)
-    app = create_app(container=SimpleNamespace(article_workflow_service=workflow), prewarm=False)
+    calls: list[tuple[str, bool]] = []
+    workflow = SimpleNamespace(
+        fetch_article=lambda url, force_refresh=False: calls.append((url, force_refresh)) or article
+    )
+    reading = SimpleNamespace(get_metadata=lambda _: metadata)
+    app = create_app(
+        container=SimpleNamespace(
+            article_workflow_service=workflow, article_reading_service=reading
+        ),
+        prewarm=False,
+    )
 
     response = TestClient(app).post(
         "/api/article/fetch",
-        json={"url": "https://mp.weixin.qq.com/s/example"},
+        json={"url": "https://mp.weixin.qq.com/s/example", "refresh": True},
     )
 
     assert response.status_code == 200
@@ -177,6 +238,9 @@ def test_fetch_endpoint_returns_article_metadata() -> None:
     assert body["success"] is True
     assert body["title"] == "测试文章"
     assert body["word_count"] == 100
+    assert body["article_id"] == "article-1"
+    assert body["reading_revision"] == "rp2:article-revision"
+    assert calls == [("https://mp.weixin.qq.com/s/example", True)]
 
 
 def test_export_endpoint_returns_download_url(tmp_path, monkeypatch) -> None:
@@ -189,16 +253,22 @@ def test_export_endpoint_returns_download_url(tmp_path, monkeypatch) -> None:
     payload = ArticleExportPayload(_metadata(), str(exported), True)
     seen: dict[str, object] = {}
 
-    def export(url, **kwargs):
+    def export_cached(article_id, expected_revision, **kwargs):
+        assert article_id == "article-1"
+        assert expected_revision == "article-revision"
         seen.update(kwargs)
         return payload
 
-    workflow = SimpleNamespace(export=export)
+    workflow = SimpleNamespace(export_cached=export_cached)
     app = create_app(container=SimpleNamespace(article_workflow_service=workflow), prewarm=False)
 
     response = TestClient(app).post(
         "/api/article/export",
-        json={"url": "https://mp.weixin.qq.com/s/example", "skip_summary": True},
+        json={
+            "article_id": "article-1",
+            "expected_revision": "article-revision",
+            "skip_summary": True,
+        },
     )
 
     assert response.status_code == 200
@@ -250,22 +320,21 @@ def test_web_download_exports_full_cached_summary_without_overwriting_it(tmp_pat
         storage,
     )
     export_payloads = []
-    export_workflow = workflow.export
+    export_workflow = workflow.export_cached
 
-    def record_export(url, **options):
-        payload = export_workflow(url, **options)
+    def record_export(article_id, **options):
+        payload = export_workflow(article_id, **options)
         export_payloads.append(payload)
         return payload
 
-    workflow.export = record_export
+    workflow.export_cached = record_export
     try:
         container = SimpleNamespace(article_workflow_service=workflow)
         export_response = export_article(
             ExportRequest(
-                url=str(article.url),
+                article_id=str(article.id),
+                expected_revision=article.revision,
                 skip_summary=True,
-                summary_content="客户端不完整摘要",
-                key_points=["客户端要点"],
             ),
             container,
         )

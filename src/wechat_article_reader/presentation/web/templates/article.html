@@ -33,6 +33,7 @@
 const $=id=>document.getElementById(id);
 let curAction=null;
 let lastSummary=null;
+let cachedArticle=null;
 let processing=false;
 let loadingTimer=null;
 let loadingStartedAt=0;
@@ -43,6 +44,8 @@ function selectAction(btn){
   document.querySelectorAll('#actions .btn').forEach(b=>{b.className='btn'});
   btn.className='btn btn-primary';
   curAction=btn.dataset.action;
+  cachedArticle=null;
+  lastSummary=null;
   $('go-area').style.display='block';
   $('out').innerHTML='';
 }
@@ -60,16 +63,16 @@ function loading(msg, hint){
 }
 function stopLoading(){clearInterval(loadingTimer);loadingTimer=null;return Math.max(0,Date.now()-loadingStartedAt);}
 
-function dlBar(articleUrl){
+function dlBar(){
   return `<div class="btn-group" style="margin:10px 0">
     <button class="btn btn-sm download-action" data-target="markdown">⬇ 下载 MD</button>
     <button class="btn btn-sm download-action" data-target="html">⬇ 下载 HTML</button>
   </div>`;
 }
 
-function bindDownloads(articleUrl){
+function bindDownloads(){
   document.querySelectorAll('.download-action').forEach(btn=>{
-    btn.addEventListener('click',()=>dlExport(articleUrl,btn.dataset.target));
+    btn.addEventListener('click',()=>dlExport(btn.dataset.target));
   });
 }
 
@@ -107,23 +110,22 @@ function prepareArticleImages(){
   });
 }
 
-async function dlExport(articleUrl,target){
+async function dlExport(target){
+  if(!cachedArticle){_toast('请先完成抓取','err');return}
   _toast('导出中...','info');
   try{
     const isFetch=curAction==='fetch';
     const isSummarize=curAction==='summarize';
     const body={
-      url:articleUrl,target,
+      article_id:cachedArticle.article_id,
+      expected_revision:cachedArticle.revision,
+      target,
       skip_summary:isFetch,
       include_body:!isSummarize,
     };
     if(target==='markdown'){
       body.include_images=$('export-images').checked;
       body.download_images=!isSummarize && $('download-images').checked;
-    }
-    if(!isFetch && lastSummary){
-      body.summary_content=lastSummary.overview;
-      body.key_points=lastSummary.key_points||[];
     }
     const r=await fetch('/api/article/export',{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -152,19 +154,26 @@ async function go(){
     const d=await r.json();
     stopLoading();
     if(!r.ok || !d.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(d.error||'抓取请求失败')}</div>`;_toast(d.error||'抓取请求失败','err');return}
+    cachedArticle=d;
     $('out').innerHTML=`<div class="result ok">
       <h3>${_escapeHtml(d.title)}</h3>
       <div class="meta">${_escapeHtml(d.author)} · ${_escapeHtml(d.account_name)} · ${d.word_count.toLocaleString()} 字${d.publish_time ? ' · '+_escapeHtml(d.publish_time) : ''}</div>
-      ${dlBar(url)}
+      ${dlBar()}
       <div class="wechat-content">${d.content_html}</div>
     </div>`;
-    bindDownloads(url);
+    bindDownloads();
     prepareArticleImages();
     _toast('抓取成功','ok');
 
   }else if(curAction==='summarize'){
+    loading('抓取中', fetchHint);
+    const fr=await fetch('/api/article/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const fd=await fr.json();
+    stopLoading();
+    if(!fr.ok || !fd.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(fd.error||'抓取请求失败')}</div>`;_toast(fd.error||'抓取请求失败','err');return}
+    cachedArticle=fd;
     loading('生成摘要中', summarizeHint);
-    const r=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const r=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:fd.article_id,expected_revision:fd.revision})});
     const d=await r.json();
     const elapsedMs=stopLoading();
     if(!r.ok || !d.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(d.error||'摘要请求失败')}</div>`;_toast(d.error||'摘要请求失败','err');return}
@@ -172,10 +181,10 @@ async function go(){
     $('out').innerHTML=`<div class="result ok">
       <h3>摘要完成</h3>
       <div class="meta">DeepSeek · 耗时 ${(elapsedMs/1000).toFixed(1)}s</div>
-      ${dlBar(url)}
+      ${dlBar()}
       ${summaryDetails(d)}
     </div>`;
-    bindDownloads(url);
+    bindDownloads();
     _toast('摘要完成','ok');
 
   }else{
@@ -184,8 +193,9 @@ async function go(){
     const fd=await fr.json();
     stopLoading();
     if(!fr.ok || !fd.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(fd.error||'抓取请求失败')}</div>`;_toast(fd.error||'抓取请求失败','err');return}
+    cachedArticle=fd;
     loading('生成摘要中', summarizeHint);
-    const sr=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const sr=await fetch('/api/article/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({article_id:fd.article_id,expected_revision:fd.revision})});
     const sd=await sr.json();
     const elapsedMs=stopLoading();
     if(!sr.ok || !sd.success){processing=false;$('out').innerHTML=`<div class="result err">${_escapeHtml(sd.error||'摘要请求失败')}</div>`;_toast(sd.error||'摘要请求失败','err');return}
@@ -193,13 +203,13 @@ async function go(){
     $('out').innerHTML=`<div class="result ok">
       <h3>${_escapeHtml(fd.title)}</h3>
       <div class="meta">${_escapeHtml(fd.author)} · ${_escapeHtml(fd.account_name)} · ${fd.word_count.toLocaleString()} 字${fd.publish_time ? ' · '+_escapeHtml(fd.publish_time) : ''}</div>
-      ${dlBar(url)}
+      ${dlBar()}
       <div class="meta">DeepSeek · 耗时 ${(elapsedMs/1000).toFixed(1)}s</div>
       ${summaryDetails(sd)}
       <h4 style="margin-top:16px;font-size:13px;color:#a1a1aa">原文</h4>
       <div class="wechat-content">${fd.content_html}</div>
     </div>`;
-    bindDownloads(url);
+    bindDownloads();
     prepareArticleImages();
     _toast('抓取+摘要完成','ok');
   }
