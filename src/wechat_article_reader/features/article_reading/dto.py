@@ -52,9 +52,7 @@ class ReadingSection:
     synthetic: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload.pop("synthetic")
-        return payload
+        return asdict(self)
 
 
 @dataclass(frozen=True)

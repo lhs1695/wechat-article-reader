@@ -121,7 +121,9 @@ def test_ingest_returns_stable_article_id(monkeypatch) -> None:
 
     assert result["success"] is True
     assert result["cached"] is True
-    assert "sections" in result
+    assert "sections_page" in result
+    assert "images_page" in result
+    assert "sections" not in result
 
 
 def test_get_cached_article_rejects_invalid_uuid(monkeypatch) -> None:

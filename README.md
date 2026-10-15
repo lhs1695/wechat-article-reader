@@ -42,17 +42,17 @@
 }
 ```
 
-`ingest_article` 先返回 `article_id`、`title`、`word_count`、`block_count`、`sections`（默认 H2；这篇没有 H2，目录对齐到 H3）。失败不走这种成功体，见下「为什么这么设计」。
+`ingest_article` 返回 `article_id`、`title`、`word_count`、`block_count`，以及默认 H2 的 `sections_page` / `images_page`（本地目录没有 H2 时对齐到 H3）。两份清单默认各返回 20 项；大清单按各自的 `next` 参数调用 `get_cached_article` 续取。失败不走这种成功体，见下「为什么这么设计」。
 
-以上是历史实调，当前响应增加 `revision`、`next_read`、`sections_in_page` 和图片阅读状态。续读请直接使用 `next_read` 中的完整参数，旧的 cursor-only 调用需要升级；完整契约见 [用法](docs/用法.md)。
+以上是历史实调。当前响应含 `revision`、`next_read`、有界的 `sections_in_page`、分页图片引用及图片阅读状态。正文字符数不等于传输预算：完整 FastMCP 结果按 UTF-8 序列化最多 128 KiB，超预算会缩小当前页；续读请直接使用 `next_read` 中的完整参数。完整契约见 [用法](docs/用法.md)。
 
 ## 工具表与明确不做
 
 | 工具 | 副作用 | 作用 |
 | --- | --- | --- |
-| `ingest_article(url, refresh=false, toc_level=2)` | 联网 + 写 SQLite | 唯一抓公众号入口；默认 H2，无 H2 时对齐到最浅标题 |
-| `get_cached_article(article_id, toc_level=2)` | 无 | 再读元数据；ingest 已带目录时可跳过 |
-| `read_article(article_id, cursor=0, max_chars=20000, include_images=false, section=null, section_start_cursor=null, expected_revision=null)` | 无 | 把一页或一节读进模型上下文；续读原样使用 `next_read` |
+| `ingest_article(url, refresh=false, toc_level=2, sections_limit=20, images_limit=20)` | 联网 + 写 SQLite | 唯一抓公众号入口；章节和图片清单分别分页 |
+| `get_cached_article(article_id, toc_level=2, sections_cursor=null, images_cursor=null, sections_limit=20, images_limit=20)` | 无 | 只读元数据；按章节和图片游标独立续取 |
+| `read_article(article_id, cursor=0, max_chars=20000, include_images=false, section=null, section_start_cursor=null, expected_revision=null)` | 无 | 把一页或一节读进模型上下文；完整 MCP 响应最多 128 KiB，必要时缩小正文页；续读原样使用 `next_read` |
 | `export_article(article_id, path, include_images=false, download_images=false)` | 写盘；显式下载时联网 | 导出 Markdown；可同时导出 `.assets` 图片和清单，成功体不含正文 |
 | `read_article_image(article_id, image_id, expected_revision, download_image=false, send_to_model=false)` | 显式下载时联网/写图片缓存；显式提供时返回图像 | 默认仅元数据，图片编号来自阅读页/元数据；客户端需支持视觉 |
 | `summarize_article(article_id, max_length=1200)` | 访问 DeepSeek | 不抓公众号；未缓存 / 超长 / 无密钥会明确失败 |
